@@ -57,6 +57,22 @@ export interface ContentIndex {
   saveStats: { count: number; bytes: number };
 }
 
+/** The fields of a benchmark the home page and site search use. */
+export type BenchmarkSummary = Pick<
+  BenchmarkEntry,
+  'slug' | 'title' | 'date' | 'summary' | 'tags' | 'featured' | 'factorioVersion' | 'platform' | 'cpu' | 'topic' | 'question' | 'finding'
+>;
+
+/**
+ * `src/generated/summary.json`: the slice of the index that ships in the main bundle
+ * (scripts/sync-content.mjs writes it; its SUMMARY_FIELDS must list BenchmarkSummary's keys).
+ */
+export interface ContentSummary {
+  topics: TopicSummary[];
+  benchmarks: BenchmarkSummary[];
+  saveStats: ContentIndex['saveStats'];
+}
+
 /**
  * One save in `src/generated/saves.json`:
  * `[path within the source repo, size in bytes, git-lfs sha256 oid]`.

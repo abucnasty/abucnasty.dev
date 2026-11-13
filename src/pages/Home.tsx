@@ -1,8 +1,8 @@
 import { Box, ButtonBase, Chip, Stack, Typography } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import { Link as RouterLink } from 'react-router-dom';
-import index from '../generated/index.json';
-import type { ContentIndex } from '../content';
+import summary from '../generated/summary.json';
+import type { BenchmarkSummary, ContentSummary } from '../content';
 import { activeCount, useCatalog } from '../catalog';
 import { blogPosts } from '../blog/registry';
 import { formatBytes } from '../format';
@@ -14,7 +14,8 @@ import { SectionHeader } from '../components/SectionHeader';
 import { ListRow, RowGroup } from '../components/ListRow';
 import { useSearch } from '../components/SearchDialog';
 
-const content = index as ContentIndex;
+// The small slice of the index (summary.json), not index.json: Home ships in the main bundle.
+const content = summary as ContentSummary;
 
 const LATEST_COUNT = 8;
 
@@ -31,7 +32,7 @@ interface FeedItem {
 
 const topicLabels = new Map(content.topics.map((t) => [t.id, t.label]));
 
-function benchmarkItem(b: ContentIndex['benchmarks'][number]): FeedItem {
+function benchmarkItem(b: BenchmarkSummary): FeedItem {
   const topicLabel = b.topic ? topicLabels.get(b.topic) : undefined;
   return {
     key: `benchmark:${b.slug}`,

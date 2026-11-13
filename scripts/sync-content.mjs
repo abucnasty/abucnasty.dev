@@ -13,6 +13,8 @@
  * - Every `.zip` committed to the source repo (curated or not) is indexed into
  *   src/generated/saves.json for the /saves page — see scripts/lib/save-index.mjs.
  *   That index is read from git objects at HEAD, so the source must be a git clone.
+ * - src/generated/summary.json is a small slice of index.json (topics, save totals and
+ *   the benchmarks' text fields) for the home page and site search, which ship in the main bundle.
  *
  * Source repo path resolution:
  *   - `.env` and `.env.local` (if present) are loaded from the site root.
@@ -51,6 +53,9 @@ const SOURCE_REPO_PATH =
 /** @typedef {{ slug: string, source: string, title: string, date?: string, summary?: string, tags?: string[], topic?: string, featured?: boolean, chart?: ChartConfig }} BenchmarkEntry */
 /** @typedef {{ id: string, label: string }} Topic */
 /** @typedef {{ sourceRepo: { owner: string, repo: string, branch: string }, lfsWorkerUrl?: string, topics?: Topic[], benchmarks: BenchmarkEntry[] }} Manifest */
+
+/** Benchmark fields copied into src/generated/summary.json (see BenchmarkSummary in src/content.ts). */
+const SUMMARY_FIELDS = ['slug', 'title', 'date', 'summary', 'tags', 'featured', 'factorioVersion', 'platform', 'cpu', 'topic', 'question', 'finding'];
 
 /** Shortest text worth showing as a one-line finding. */
 const MIN_FINDING_LENGTH = 12;
@@ -96,22 +101,24 @@ async function main() {
   }
 
   await fs.mkdir(GENERATED_DIR, { recursive: true });
+  const topics = (manifest.topics ?? []).map((t) => ({
+    id: t.id,
+    label: t.label,
+    count: benchmarks.filter((b) => b.topic === t.id).length,
+  }));
+  const saveStats = { count: saveIndex.files.length, bytes: saveIndex.files.reduce((sum, file) => sum + file[1], 0) };
   await fs.writeFile(
     path.join(GENERATED_DIR, 'index.json'),
-    JSON.stringify(
-      {
-        sourceRepo: manifest.sourceRepo,
-        topics: (manifest.topics ?? []).map((t) => ({
-          id: t.id,
-          label: t.label,
-          count: benchmarks.filter((b) => b.topic === t.id).length,
-        })),
-        benchmarks,
-        saveStats: { count: saveIndex.files.length, bytes: saveIndex.files.reduce((sum, file) => sum + file[1], 0) },
-      },
-      null,
-      2,
-    ),
+    JSON.stringify({ sourceRepo: manifest.sourceRepo, topics, benchmarks, saveStats }, null, 2),
+  );
+  // The few fields the home page and site search show, so the main bundle need not carry the
+  // whole index (save lists, chart config, links). Keep in step with ContentSummary in src/content.ts.
+  const summaryBenchmarks = benchmarks.map((b) =>
+    Object.fromEntries(SUMMARY_FIELDS.filter((key) => b[key] !== undefined).map((key) => [key, b[key]])),
+  );
+  await fs.writeFile(
+    path.join(GENERATED_DIR, 'summary.json'),
+    JSON.stringify({ topics, benchmarks: summaryBenchmarks, saveStats }),
   );
   log(`✓ index.json (${benchmarks.length} benchmarks)`);
 }
@@ -508,6 +515,7 @@ async function walk(dir) {
 async function resetOutputDirs() {
   await fs.rm(path.join(GENERATED_DIR, 'benchmarks'), { recursive: true, force: true });
   await fs.rm(path.join(GENERATED_DIR, 'index.json'), { force: true });
+  await fs.rm(path.join(GENERATED_DIR, 'summary.json'), { force: true });
   await fs.rm(path.join(GENERATED_DIR, 'saves.json'), { force: true });
   await fs.rm(PUBLIC_BENCHMARKS_DIR, { recursive: true, force: true });
   await fs.mkdir(GENERATED_DIR, { recursive: true });
