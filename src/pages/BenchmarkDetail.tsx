@@ -33,14 +33,14 @@ const MORE_IN_TOPIC = 5;
 /** Height in px of the sidebar without its contents list, when both link blocks are at full length. */
 const SIDEBAR_FIXED_HEIGHT = 520;
 
-// Dated benchmarks by date, oldest first; the same date keeps manifest order (Array.sort is stable).
+// Dated benchmarks by date, oldest first; the same date keeps index order (Array.sort is stable).
 const byDate = content.benchmarks
   .filter((b) => b.date)
   .sort((a, b) => (a.date as string).localeCompare(b.date as string));
 
 /**
  * Up to MORE_IN_TOPIC other benchmarks of the same topic: dated ones newest first, then undated
- * ones in manifest order. `total` is how many others there are.
+ * ones in index order. `total` is how many others there are.
  */
 function moreInTopic(current: BenchmarkEntry): { shown: BenchmarkEntry[]; total: number } {
   const others = content.benchmarks.filter((b) => b.topic === current.topic && b.slug !== current.slug);

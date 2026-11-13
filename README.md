@@ -34,7 +34,23 @@ Sync runs through `&&` in the `dev` and `build` scripts, not lifecycle hooks, so
 
 ## Where content comes from
 
-- **Benchmarks and saves** are not in this repo. At build time `scripts/sync-content.mjs` reads the factorio-benchmarks clone and writes `src/generated/` and `public/benchmarks/` (both gitignored). Only the files a write-up's rendered markdown loads from the site (its images) go to `public/benchmarks/`; links to other files in the folder point at GitHub (or the LFS worker), and every site URL in the published markdown must resolve to a published file. PNG and JPEG images are published as WebP, at most 1600 px wide, by [sharp](https://sharp.pixelplumbing.com/) (`scripts/lib/webp.mjs`: lossless for images with at most 4096 colours, such as charts, quality 82 otherwise); SVGs and animated PNGs are copied as they are. sharp's native binaries come from its platform-specific optional dependencies, not an install script, so it works with `npm ci --ignore-scripts`; an install with `--omit=optional` would break it. `content/manifest.json` lists the curated benchmarks (`slug`, `source` path, `title`, optional `date`, `summary`, `tags`, `featured`, `topic`, `chart`) and the topics. To add or remove a benchmark, edit the manifest and rebuild. The `/saves` index covers every `.zip` committed at `HEAD` of the source repo, read from git-lfs pointers; downloads go through `lfsWorkerUrl` in the manifest. Sync fails rather than publish a broken page.
+- **Benchmarks and saves** are not in this repo. At build time `scripts/sync-content.mjs` reads the factorio-benchmarks clone and writes `src/generated/` and `public/benchmarks/` (both gitignored). Only the files a write-up's rendered markdown loads from the site (its images) go to `public/benchmarks/`; links to other files in the folder point at GitHub (or the LFS worker), and every site URL in the published markdown must resolve to a published file. PNG and JPEG images are published as WebP, at most 1600 px wide, by [sharp](https://sharp.pixelplumbing.com/) (`scripts/lib/webp.mjs`: lossless for images with at most 4096 colours, such as charts, quality 82 otherwise); SVGs and animated PNGs are copied as they are. sharp's native binaries come from its platform-specific optional dependencies, not an install script, so it works with `npm ci --ignore-scripts`; an install with `--omit=optional` would break it. A benchmark is published when its `benchmarks/<folder>/README.md` in factorio-benchmarks starts with frontmatter that opts in; the frontmatter is not published with the write-up:
+
+  ```yaml
+  ---
+  publish: true                   # required; without it the folder is not published
+  slug: clocked-mining-drills     # required; the page is /benchmarks/<slug>
+  title: Clocked Mining Drills    # required
+  topic: mining                   # optional; an id from `topics` in content/manifest.json
+  date: 2025-11-11                # optional, YYYY-MM-DD
+  featured: 3                     # optional; place in the home page's Featured list
+  chart:                          # optional; the interactive chart's scenario CSVs
+    scenarios:
+      - { name: Clocked, csv: results/bm_mining_drill_clocked_verbose_metrics.csv }
+  ---
+  ```
+
+  `summary` and `tags` are accepted too; any other field, a duplicate slug or an unknown topic fails the sync (`scripts/lib/benchmark-frontmatter.mjs`). Benchmarks are listed in folder-name order with featured ones first; every list on the site sorts by date and keeps that order for ties and undated ones. So publishing a benchmark means editing only factorio-benchmarks. `content/manifest.json` keeps the site-wide settings: the source repo and branch, `lfsWorkerUrl` and the topics. The `/saves` index covers every `.zip` committed at `HEAD` of the source repo, read from git-lfs pointers; downloads go through `lfsWorkerUrl` in the manifest. Sync fails rather than publish a broken page.
 - **Blueprints** are fetched in the browser on each visit from the live catalog at `https://blueprints.abucnasty.dev/index.json`, published from [abucnasty/factorio-blueprints](https://github.com/abucnasty/factorio-blueprints). See `src/catalog.ts` (types and pure helpers in `src/catalogCore.ts`, which the Worker shares).
 - **Blog posts** live in `src/blog/posts/` (Markdown or TSX) and are registered in `src/blog/registry.ts`. `scripts/sync-blog-images.mjs` copies their images to `public/blog/`.
 - **Tools** are listed in `src/data/tools.ts`.
@@ -58,11 +74,13 @@ Cloudflare Web Analytics is a dashboard setting (automatic setup on the proxied 
 
 **Checks.** Every pull request runs `.github/workflows/check.yml` (no secrets needed): the same benchmarks checkout and `npm run build` as a deploy, `npm test`, `npx wrangler deploy --dry-run`, and `npm run check -- --only home,blueprints,benchmark-detail` in headless Chromium. The page checks fetch nothing live: the blueprint catalog and the avatar come from fixtures, and any other outside request fails the run.
 
-On every push to `main` (or a manual run), `.github/workflows/deploy.yml`:
+On every push to `main`, a manual run, or a `benchmarks-updated` repository dispatch, `.github/workflows/deploy.yml`:
 
-1. reads `content/manifest.json` and sparse-clones factorio-benchmarks with only the curated paths checked out (`--filter=blob:limit=1k`, so every git-lfs pointer still arrives for the save index), then pulls the chart CSVs from git-lfs;
-2. runs `npm ci --ignore-scripts`, `npm run build` and `npm test`;
+1. runs `npm ci --ignore-scripts`, sparse-clones factorio-benchmarks (`--filter=blob:limit=1k`, so every git-lfs pointer still arrives for the save index) with only the benchmark READMEs checked out, reads their frontmatter, narrows the checkout to the published folders, then pulls the chart CSVs from git-lfs;
+2. runs `npm run build` and `npm test`;
 3. runs `npx wrangler deploy --secrets-file <temp file>`, which uploads the Worker's secrets from repository secrets along with the new version.
+
+factorio-benchmarks sends that dispatch on each push to its `master` that touches a benchmark folder, a save or a README (its `.github/workflows/rebuild-site.yml`), so a new or changed benchmark goes live without a change here. That workflow uses the `SITE_DISPATCH_TOKEN` secret of factorio-benchmarks: a fine-grained personal access token with access to `abucnasty/abucnasty.dev` only and the repository permission Contents: Read and write.
 
 Repository secrets it needs:
 

@@ -33,7 +33,7 @@ const MAX_POINTER_BYTES = 1024;
  * @param {object} opts
  * @param {string} opts.repoPath  Local clone of the source repo.
  * @param {string} [opts.lfsWorkerUrl]
- * @param {Array<{ slug: string, source: string, title: string, date?: string }>} opts.benchmarks  Manifest entries.
+ * @param {Array<{ slug: string, source: string, title: string, date?: string }>} opts.benchmarks  Published benchmarks.
  * @param {(msg: string) => void} [opts.log]
  * @returns {SaveIndex}
  */

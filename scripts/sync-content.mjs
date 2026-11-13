@@ -4,6 +4,9 @@
  * `factorio-benchmarks` into this site, rewriting markdown asset paths and
  * emitting a typed index that the React app imports.
  *
+ * - A benchmark is published when the frontmatter of its `benchmarks/<folder>/README.md`
+ *   says `publish: true`; that frontmatter also holds its slug, title, topic, date and chart
+ *   (scripts/lib/benchmark-frontmatter.mjs). content/manifest.json holds only site-wide settings.
  * - README.md is rewritten and written to src/generated/benchmarks/<slug>/README.md
  *   (plus question.md and answer.md when those sections are lifted out of it).
  * - Only the files that rewritten markdown loads from the site (its images) are copied,
@@ -36,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { aggregateScenarioCsv } from './lib/aggregate.mjs';
 import { parseReadmeMeta } from './lib/readme-meta.mjs';
+import { discoverBenchmarks, splitFrontmatter } from './lib/benchmark-frontmatter.mjs';
 import { stripOwnToc } from './lib/strip-toc.mjs';
 import { findSection, removeSection, plainFirstParagraph } from './lib/readme-sections.mjs';
 import { buildSaveIndex, createHeadReader } from './lib/save-index.mjs';
@@ -65,7 +69,7 @@ const SOURCE_REPO_PATH =
 /** @typedef {{ scenarios?: ChartScenario[], groups?: ChartGroup[], metrics?: string[], removeFirstTicks?: number, maxTicks?: number, window?: number }} ChartConfig */
 /** @typedef {{ slug: string, source: string, title: string, date?: string, summary?: string, tags?: string[], topic?: string, featured?: boolean, chart?: ChartConfig }} BenchmarkEntry */
 /** @typedef {{ id: string, label: string }} Topic */
-/** @typedef {{ sourceRepo: { owner: string, repo: string, branch: string }, lfsWorkerUrl?: string, topics?: Topic[], benchmarks: BenchmarkEntry[] }} Manifest */
+/** @typedef {{ sourceRepo: { owner: string, repo: string, branch: string }, lfsWorkerUrl?: string, topics?: Topic[] }} Manifest */
 
 /** Benchmark fields copied into src/generated/summary.json (see BenchmarkSummary in src/content.ts). */
 const SUMMARY_FIELDS = ['slug', 'title', 'date', 'summary', 'tags', 'featured', 'factorioVersion', 'platform', 'cpu', 'topic', 'question', 'finding'];
@@ -78,8 +82,12 @@ async function main() {
     JSON.parse(await fs.readFile(MANIFEST_PATH, 'utf8'))
   );
 
-  validateTopics(manifest);
+  const topicIds = validateTopics(manifest);
   await assertSourceExists();
+  const published = discoverBenchmarks(SOURCE_REPO_PATH, topicIds);
+  if (published.length === 0) {
+    throw new Error(`no README under ${SOURCE_REPO_PATH}/benchmarks has "publish: true" in its frontmatter; refusing to publish no benchmarks`);
+  }
   await resetOutputDirs();
 
   const githubBase = `https://github.com/${manifest.sourceRepo.owner}/${manifest.sourceRepo.repo}`;
@@ -92,13 +100,13 @@ async function main() {
   const saveIndex = buildSaveIndex({
     repoPath: SOURCE_REPO_PATH,
     lfsWorkerUrl: manifest.lfsWorkerUrl,
-    benchmarks: manifest.benchmarks,
+    benchmarks: published,
     log,
   });
   await fs.writeFile(path.join(GENERATED_DIR, 'saves.json'), JSON.stringify(saveIndex));
 
   const benchmarks = [];
-  for (const entry of manifest.benchmarks) {
+  for (const entry of published) {
     const result = await syncBenchmark(entry, githubBase, manifest.sourceRepo.branch, rawBase, treeBase, lfsWorkerUrl, headReader);
     benchmarks.push(result);
     log(`✓ ${entry.slug} (${result.assetCount} assets, ${result.saves.length} saves)`);
@@ -208,7 +216,7 @@ async function syncBenchmark(entry, githubBase, branch, rawBase, treeBase, lfsWo
     }
 
     if (rel.toLowerCase() === 'readme.md') {
-      const raw = await fs.readFile(absFile, 'utf8');
+      const { body: raw } = splitFrontmatter(await fs.readFile(absFile, 'utf8'), `${entry.source}/${rel}`);
       ({ factorioVersion, platform, cpu } = parseReadmeMeta(raw));
       const rawGithubDir = `${rawBase}/${entry.source}`;
       // Order matters: strip the README's own contents list, lift the question and answer
@@ -278,7 +286,7 @@ async function convertImages() {
 }
 
 /**
- * Fail the sync on a bad topic list: duplicate ids, or a benchmark whose `topic` is not one.
+ * Fail the sync on duplicate topic ids; return the ids (benchmark topics are checked against them).
  *
  * @param {Manifest} manifest
  */
@@ -288,11 +296,7 @@ function validateTopics(manifest) {
     if (ids.has(topic.id)) throw new Error(`manifest: duplicate topic id "${topic.id}"`);
     ids.add(topic.id);
   }
-  for (const entry of manifest.benchmarks) {
-    if (entry.topic !== undefined && !ids.has(entry.topic)) {
-      throw new Error(`manifest: benchmark "${entry.slug}" has topic "${entry.topic}", which is not in "topics"`);
-    }
-  }
+  return ids;
 }
 
 /**
@@ -346,7 +350,7 @@ function liftQuestionAndAnswer(markdown) {
 }
 
 /**
- * Aggregate every scenario CSV declared in the manifest into a single
+ * Aggregate every scenario CSV declared in the benchmark's `chart` into a single
  * `timeseries.json` written next to the rewritten README. Returns true if a
  * file was emitted.
  *

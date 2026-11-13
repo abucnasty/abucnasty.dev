@@ -381,11 +381,11 @@ module.exports = {
     const all = data.index.benchmarks;
     const topicsById = new Map(data.index.topics.map((t) => [t.id, t]));
     const order = new Map(all.map((b, i) => [b.slug, i]));
-    // Oldest first; a shared date keeps manifest order.
+    // Oldest first; a shared date keeps index order.
     const dateOrder = all
       .filter((b) => b.date)
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : order.get(a.slug) - order.get(b.slug)));
-    // Dated newest first (a shared date keeps manifest order), then undated in manifest order.
+    // Dated newest first (a shared date keeps index order), then undated in index order.
     const expectedMore = (b) => {
       const others = all.filter((x) => x.topic === b.topic && x.slug !== b.slug);
       const dated = others
