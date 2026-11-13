@@ -54,6 +54,8 @@ It is served at `https://abucnasty.dev`, a custom domain in `routes` in `wrangle
 
 Cloudflare Web Analytics is a dashboard setting (automatic setup on the proxied zone), not a script in this repo.
 
+**Checks.** Every pull request runs `.github/workflows/check.yml` (no secrets needed): the same benchmarks checkout and `npm run build` as a deploy, `npm test`, `npx wrangler deploy --dry-run`, and `npm run check -- --only home,blueprints,benchmark-detail` in headless Chromium. The page checks fetch nothing live: the blueprint catalog and the avatar come from fixtures, and any other outside request fails the run.
+
 On every push to `main` (or a manual run), `.github/workflows/deploy.yml`:
 
 1. reads `content/manifest.json` and sparse-clones factorio-benchmarks with only the curated paths checked out (`--filter=blob:limit=1k`, so every git-lfs pointer still arrives for the save index), then pulls the chart CSVs from git-lfs;

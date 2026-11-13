@@ -197,7 +197,9 @@ module.exports = {
         const box = await lead.boundingBox();
         const q = await first.boundingBox();
         expect(`${label}: question is inset inside the lead`, q.x - box.x >= 12 && q.y - box.y >= 12, `dx=${q.x - box.x} dy=${q.y - box.y}`);
-        const tabsBox = await page.locator('[role="tablist"]').first().boundingBox().catch(() => null);
+        // The page has rendered by now; a page with no tab bar must not wait out the 30 s timeout.
+        const tabList = page.locator('[role="tablist"]').first();
+        const tabsBox = (await tabList.count()) ? await tabList.boundingBox() : null;
         if (tabsBox) {
           expect(`${label}: lead is above the tab bar`, box.y + box.height <= tabsBox.y + 1, `leadBottom=${Math.round(box.y + box.height)} tabs=${Math.round(tabsBox.y)}`);
         }

@@ -25,6 +25,7 @@ jobs:
           node-version: '24'
           cache: 'npm'
 
+      # check.yml repeats this step and the next; keep them in step.
       - name: Resolve source repo + sparse-checkout paths
         id: manifest
         run: |
