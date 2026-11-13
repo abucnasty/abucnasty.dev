@@ -11,13 +11,6 @@ import {
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import YouTubeIcon from '@mui/icons-material/YouTube';
 
-const YT_CHANNEL_ID = 'UCSdiZ-R-EnnHqKvCrZdQMBQ';
-// The uploads playlist ID for any channel is the channel ID with the `UC`
-// prefix replaced by `UU`. Fetching this playlist's first item costs 1 quota
-// unit, vs. 100 for the search endpoint.
-const YT_UPLOADS_PLAYLIST_ID = `UU${YT_CHANNEL_ID.slice(2)}`;
-const YT_API_KEY = import.meta.env.VITE_YT_API_KEY as string | undefined;
-
 interface LatestVideo {
   id: string;
   title: string;
@@ -25,37 +18,23 @@ interface LatestVideo {
   url: string;
 }
 
-interface PlaylistItemsResponse {
-  items?: Array<{
-    snippet?: {
-      title?: string;
-      publishedAt?: string;
-      resourceId?: { videoId?: string };
-    };
-  }>;
-}
-
+/**
+ * The channel's newest upload, from the Worker (worker/latestVideo.ts), which holds the YouTube API
+ * key. Under `vite dev` or `vite preview` there is no Worker, so the path answers 404 or index.html
+ * and the card shows its "couldn't load" message; `wrangler dev` serves the real thing (see README).
+ */
 async function fetchLatestVideo(): Promise<LatestVideo | null> {
-  if (!YT_API_KEY) {
-    console.warn('VITE_YT_API_KEY is not set; latest video cannot be loaded.');
+  const res = await fetch('/api/latest-video', { headers: { Accept: 'application/json' } });
+  if (!res.headers.get('Content-Type')?.includes('application/json')) {
+    console.warn('/api/latest-video is served by the Worker; run `wrangler dev` to load the latest video locally.');
     return null;
   }
-  const url =
-    `https://www.googleapis.com/youtube/v3/playlistItems` +
-    `?part=snippet&maxResults=1&playlistId=${YT_UPLOADS_PLAYLIST_ID}` +
-    `&key=${YT_API_KEY}`;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const data = (await res.json()) as PlaylistItemsResponse;
-  const snippet = data.items?.[0]?.snippet;
-  const id = snippet?.resourceId?.videoId;
-  if (!snippet || !id) return null;
-  return {
-    id,
-    title: snippet.title ?? '',
-    published: snippet.publishedAt,
-    url: `https://www.youtube.com/watch?v=${id}`,
-  };
+  const data = (await res.json()) as Partial<LatestVideo> & { message?: string };
+  if (!res.ok || typeof data.id !== 'string' || typeof data.url !== 'string') {
+    if (data.message) console.warn(`Latest video: ${data.message}`);
+    return null;
+  }
+  return { id: data.id, title: data.title ?? '', published: data.published, url: data.url };
 }
 
 export function LatestVideo({ compact = false }: { compact?: boolean }) {

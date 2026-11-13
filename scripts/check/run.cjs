@@ -24,8 +24,8 @@ const VIEWPORTS = {
 // message text and the URL of the resource that failed.
 const IGNORED_ERRORS = [
   {
-    match: 'googleapis.com/youtube',
-    why: "Home's latest-video card calls the YouTube Data API, which fails without an API key",
+    match: '/api/latest-video',
+    why: "Home's latest-video card calls the Worker, which vite preview does not run (404)",
   },
   {
     match: 'blueprints.abucnasty.dev/index.json',

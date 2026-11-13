@@ -9,7 +9,9 @@
     "build": "node scripts/sync-content.mjs && node scripts/sync-blog-images.mjs && tsc -b && vite build",
     "preview": "vite preview",
     "lint": "tsc -b --noEmit",
+    "test": "node --test worker/*.test.ts",
     "check": "node scripts/check/run.cjs",
+    "types:worker": "wrangler types worker/worker-configuration.d.ts --strict-vars=false",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
@@ -32,6 +34,7 @@
     "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
