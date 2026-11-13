@@ -5,7 +5,7 @@
     "repo": "factorio-benchmarks",
     "branch": "master"
   },
-  "lfsWorkerUrl": "https://factorio-lfs.abucnasty.workers.dev",
+  "lfsWorkerUrl": "https://saves.abucnasty.dev",
   "topics": [
     { "id": "inserters", "label": "Inserters & clocking" },
     { "id": "science", "label": "Science builds" },
