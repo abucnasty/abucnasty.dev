@@ -5,11 +5,19 @@
  * emitting a typed index that the React app imports.
  *
  * - README.md is rewritten and written to src/generated/benchmarks/<slug>/README.md
- * - All other non-`.zip` files are copied (preserving sub-paths) to public/benchmarks/<slug>/
+ *   (plus question.md and answer.md when those sections are lifted out of it).
+ * - Only the files that rewritten markdown loads from the site (its images) are copied,
+ *   preserving sub-paths, to public/benchmarks/<slug>/. The set is read off the markdown as
+ *   the site renders it (scripts/lib/rendered-urls.mjs); nothing else in the folder is published.
+ *   PNG and JPEG images are published as WebP at most 1600 px wide (scripts/lib/webp.mjs), and
+ *   the markdown is rewritten to load the `.webp` files; SVGs and animated images are copied as is.
  * - `.zip` files are NOT copied; the index gets a download URL on the LFS worker
  *   (`manifest.lfsWorkerUrl`) built from the file's git-lfs object id at HEAD.
- * - Relative links in a README point at GitHub: a folder gets its `tree` page, a file
- *   tracked by git-lfs gets the same LFS worker URL as a save, anything else the raw file.
+ * - Relative links in a README (markdown, reference-style or HTML `<a href>`) point at GitHub:
+ *   a folder gets its `tree` page, a file tracked by git-lfs gets the same LFS worker URL as a
+ *   save, anything else the raw file.
+ * - Before finishing, every site URL in the published markdown is checked against the files
+ *   written to public/benchmarks/ and the benchmark slugs; any that would not resolve fails the sync.
  * - Every `.zip` committed to the source repo (curated or not) is indexed into
  *   src/generated/saves.json for the /saves page — see scripts/lib/save-index.mjs.
  *   That index is read from git objects at HEAD, so the source must be a git clone.
@@ -21,7 +29,7 @@
  *   1. $FACTORIO_BENCHMARKS_PATH  (preferred — used in CI)
  *   2. ../factorio/factorio-benchmarks  (local dev fallback)
  */
-import { promises as fs } from 'node:fs';
+import { promises as fs, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,6 +39,8 @@ import { parseReadmeMeta } from './lib/readme-meta.mjs';
 import { stripOwnToc } from './lib/strip-toc.mjs';
 import { findSection, removeSection, plainFirstParagraph } from './lib/readme-sections.mjs';
 import { buildSaveIndex, createHeadReader } from './lib/save-index.mjs';
+import { renderedUrls, isSiteUrl } from './lib/rendered-urls.mjs';
+import { convertToWebp, isAnimatedPng, isConvertible, mapPool, webpName, MAX_WIDTH, LOSSY_QUALITY } from './lib/webp.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,6 +52,9 @@ dotenv.config({ path: path.join(ROOT, '.env.local'), override: true });
 const MANIFEST_PATH = path.join(ROOT, 'content', 'manifest.json');
 const GENERATED_DIR = path.join(ROOT, 'src', 'generated');
 const PUBLIC_BENCHMARKS_DIR = path.join(ROOT, 'public', 'benchmarks');
+
+/** @type {{ src: string, dest: string }[]} images to convert to WebP, queued by syncBenchmark */
+const imageJobs = [];
 
 const SOURCE_REPO_PATH =
   process.env.FACTORIO_BENCHMARKS_PATH ??
@@ -90,6 +103,8 @@ async function main() {
     benchmarks.push(result);
     log(`✓ ${entry.slug} (${result.assetCount} assets, ${result.saves.length} saves)`);
   }
+  await convertImages();
+  await assertPublishedUrlsResolve(benchmarks.map((b) => b.slug));
 
   const total = benchmarks.length;
   const count = (key) => benchmarks.filter((b) => b[key]).length;
@@ -143,7 +158,8 @@ async function syncBenchmark(entry, githubBase, branch, rawBase, treeBase, lfsWo
 
   const files = await walk(srcDir);
   const saves = [];
-  let assetCount = 0;
+  /** @type {(renames?: Map<string, string>) => Record<string, string>} published markdown file name → its text */
+  let renderMarkdown = () => ({});
   let factorioVersion;
   let platform;
   let cpu;
@@ -201,23 +217,32 @@ async function syncBenchmark(entry, githubBase, branch, rawBase, treeBase, lfsWo
       const lifted = liftQuestionAndAnswer(stripped);
       ({ question, finding } = lifted);
       const linkRewrites = planLinkRewrites(stripped, entry.source, treeBase, lfsWorkerUrl, headReader);
-      const rewrite = (md) => rewriteMarkdownAssetPaths(md, entry.slug, rawGithubDir, linkRewrites);
-      await fs.writeFile(path.join(outMdDir, 'README.md'), rewrite(lifted.readme));
-      if (lifted.questionBody) await fs.writeFile(path.join(outMdDir, 'question.md'), rewrite(lifted.questionBody) + '\n');
-      if (lifted.answerBody) await fs.writeFile(path.join(outMdDir, 'answer.md'), rewrite(lifted.answerBody) + '\n');
+      renderMarkdown = (renames) => {
+        const rewrite = (md) => rewriteMarkdownAssetPaths(md, entry.slug, rawGithubDir, linkRewrites, renames);
+        const out = { 'README.md': rewrite(lifted.readme) };
+        if (lifted.questionBody) out['question.md'] = rewrite(lifted.questionBody) + '\n';
+        if (lifted.answerBody) out['answer.md'] = rewrite(lifted.answerBody) + '\n';
+        return out;
+      };
       continue;
     }
-
-    // Skip file types that are only needed at build time or not served to users.
-    const skipExts = new Set(['.csv', '.sh', '.ps1', '.bat', '.txt', '.json']);
-    if (skipExts.has(ext)) continue;
-
-    // Everything else (images, svgs, supplementary md) → public assets.
-    const dest = path.join(outAssetsDir, rel);
-    await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.copyFile(absFile, dest);
-    assetCount++;
+    // Any other file is published only if the markdown loads it; see below.
   }
+
+  // Find the files the markdown loads, decide which become WebP, then rewrite the markdown
+  // again to load those. Conversions are queued in `imageJobs` and run for all benchmarks at once.
+  const assets = assetsUsedBy(Object.values(renderMarkdown()), entry.slug, srcDir);
+  const renames = planWebpRenames(assets, srcDir);
+  for (const [name, text] of Object.entries(renderMarkdown(renames))) {
+    await fs.writeFile(path.join(outMdDir, name), text);
+  }
+  for (const rel of assets) {
+    const dest = path.join(outAssetsDir, renames.get(rel) ?? rel);
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    if (renames.has(rel)) imageJobs.push({ src: path.join(srcDir, rel), dest });
+    else await fs.copyFile(path.join(srcDir, rel), dest);
+  }
+  const assetCount = assets.length;
 
   // Optional: aggregate verbose CSVs for interactive charts.
   const timeseries = entry.chart
@@ -237,6 +262,19 @@ async function syncBenchmark(entry, githubBase, branch, rawBase, treeBase, lfsWo
     assetCount,
     timeseries,
   };
+}
+
+/** Run the queued WebP conversions, a few at a time, and log what they saved. */
+async function convertImages() {
+  const started = Date.now();
+  const results = await mapPool(imageJobs, ({ src, dest }) => convertToWebp(src, dest));
+  const sum = (key) => results.reduce((total, r) => total + r[key], 0);
+  const lossless = results.filter((r) => r.lossless).length;
+  const mb = (bytes) => (bytes / 1e6).toFixed(1);
+  log(
+    `✓ ${results.length} images as WebP (≤${MAX_WIDTH}px; ${lossless} lossless, ${results.length - lossless} at q${LOSSY_QUALITY}): ` +
+      `${mb(sum('bytesIn'))} MB → ${mb(sum('bytesOut'))} MB in ${((Date.now() - started) / 1000).toFixed(1)} s`,
+  );
 }
 
 /**
@@ -383,8 +421,35 @@ async function aggregateBenchmarkChart(entry, srcDir, outMdDir) {
 /** `[text](path rest)`, not an image. */
 const LINK_RE = /(?<!!)\[([^\]]*)\]\(([^)\s"']+)([^)]*)\)/g;
 
+/** `<a ... href="path"` in raw HTML. */
+const HTML_HREF_RE = /(<a\b[^>]*\bhref\s*=\s*)(["'])([^"']+)(\2)/gi;
+
+/** A reference definition `[label]: path "title"` (not a `[^footnote]:`). */
+const DEFINITION_RE = /^( {0,3}\[)((?!\^)[^\]]+)(\]:[ \t]*<?)([^\s<>]+)(.*)$/gm;
+
+/** `![alt][label]`, `![label][]` or `![label]`: an image that takes its URL from a definition. */
+const IMAGE_REF_RE = /!\[([^\]]*)\](?:\[([^\]]*)\])?(?![[(])/g;
+
+/** @param {string} label */
+const normalizeLabel = (label) => label.trim().replace(/\s+/g, ' ').toLowerCase();
+
 /**
- * Decide, for every relative `[text](path)` link in a README, whether it needs
+ * Every link target a README writes as a link rather than an image: `[text](path)`,
+ * `<a href="path">` and reference definitions (those used by images too; a link plan
+ * entry for one is simply not used).
+ *
+ * @param {string} markdown
+ */
+function linkTargets(markdown) {
+  return [
+    ...[...markdown.matchAll(LINK_RE)].map((m) => m[2]),
+    ...[...markdown.matchAll(HTML_HREF_RE)].map((m) => m[3]),
+    ...[...markdown.matchAll(DEFINITION_RE)].map((m) => m[4]),
+  ];
+}
+
+/**
+ * Decide, for every relative link in a README (see linkTargets), whether it needs
  * something other than the raw GitHub URL: a folder (raw GitHub cannot serve one)
  * gets its `tree` page, and a file that is a git-lfs pointer at HEAD (raw GitHub
  * would serve the pointer text) gets the LFS worker download URL, like a save.
@@ -401,8 +466,8 @@ const LINK_RE = /(?<!!)\[([^\]]*)\]\(([^)\s"']+)([^)]*)\)/g;
 function planLinkRewrites(markdown, source, treeBase, lfsWorkerUrl, headReader) {
   /** @type {Map<string, { repoPath: string, suffix: string }>} */
   const candidates = new Map();
-  for (const m of markdown.matchAll(LINK_RE)) {
-    const trimmed = m[2].trim();
+  for (const written of linkTargets(markdown)) {
+    const trimmed = written.trim();
     if (!trimmed || /^[a-z]+:/i.test(trimmed) || trimmed.startsWith('#') || trimmed.startsWith('/')) continue;
     const target = trimmed.replace(/^\.\//, '');
     const suffixAt = target.search(/[?#]/);
@@ -435,7 +500,7 @@ function planLinkRewrites(markdown, source, treeBase, lfsWorkerUrl, headReader) 
 
 /**
  * Rewrite markdown asset references so they point at /benchmarks/<slug>/...
- * Handles ![alt](path), <img src="path">, and any href that starts with `./`.
+ * Handles ![alt](path), <img src="path">, `<a href="path">` and reference definitions.
  * Leaves absolute URLs (http://, https://, /), anchors (#), and `mailto:` alone.
  *
  * Regular hyperlinks [text](relative-path) are rewritten to the raw GitHub URL
@@ -446,18 +511,30 @@ function planLinkRewrites(markdown, source, treeBase, lfsWorkerUrl, headReader) 
  * @param {string} slug
  * @param {string|null} [githubRawDir] - raw GitHub URL prefix for the benchmark source dir
  * @param {Map<string, string>} [linkRewrites] - relative link target → replacement URL
+ * @param {Map<string, string>} [assetRenames] - asset path (relative to the folder) → the path it is published at
  */
-function rewriteMarkdownAssetPaths(markdown, slug, githubRawDir = null, linkRewrites = new Map()) {
+function rewriteMarkdownAssetPaths(markdown, slug, githubRawDir = null, linkRewrites = new Map(), assetRenames = new Map()) {
   const prefix = `/benchmarks/${slug}`;
+
+  // `/benchmarks/<slug>/a/b.png?x` → `/benchmarks/<slug>/a/b.webp?x` when a/b.png is published as WebP.
+  const renamed = (url) => {
+    if (!url.startsWith(`${prefix}/`)) return url;
+    const suffixAt = url.search(/[?#]/);
+    const pathPart = suffixAt < 0 ? url : url.slice(0, suffixAt);
+    const rel = relPathOfUrl(pathPart.slice(prefix.length + 1));
+    const to = rel && assetRenames.get(rel);
+    if (!to) return url;
+    return `${pathPart.slice(0, pathPart.length - path.posix.extname(rel).length)}${path.posix.extname(to)}${suffixAt < 0 ? '' : url.slice(suffixAt)}`;
+  };
 
   const rewriteAssetPath = (p) => {
     const trimmed = p.trim();
     if (!trimmed) return trimmed;
     if (/^[a-z]+:/i.test(trimmed)) return trimmed; // http:, https:, mailto:, data:
     if (trimmed.startsWith('#')) return trimmed;
-    if (trimmed.startsWith('/')) return trimmed; // already site-absolute
+    if (trimmed.startsWith('/')) return renamed(trimmed); // already site-absolute
     const normalized = trimmed.replace(/^\.\//, '');
-    return `${prefix}/${normalized}`;
+    return renamed(`${prefix}/${normalized}`);
   };
 
   const rewriteLinkPath = (p) => {
@@ -475,8 +552,10 @@ function rewriteMarkdownAssetPaths(markdown, slug, githubRawDir = null, linkRewr
   };
 
   // ![alt](path "title"?) — images stay site-local
-  let out = markdown.replace(/(!\[[^\]]*\]\()([^)\s]+)([^)]*\))/g, (_m, pre, p, post) => {
-    return `${pre}${rewriteAssetPath(p)}${post}`;
+  // (a destination in angle brackets, `![alt](<path with spaces>)`, keeps its brackets)
+  let out = markdown.replace(/(!\[[^\]]*\]\()(<[^<>\n]*>|[^)\s]+)([^)]*\))/g, (_m, pre, p, post) => {
+    const url = p.startsWith('<') ? `<${rewriteAssetPath(p.slice(1, -1))}>` : rewriteAssetPath(p);
+    return `${pre}${url}${post}`;
   });
 
   // [text](path) — regular hyperlinks (not images) go to GitHub raw
@@ -489,7 +568,139 @@ function rewriteMarkdownAssetPaths(markdown, slug, githubRawDir = null, linkRewr
     return `${pre}${q}${rewriteAssetPath(p)}${qq}`;
   });
 
+  // <a href="..."> — like a markdown link (a thumbnail's own image link included)
+  out = out.replace(HTML_HREF_RE, (_m, pre, q, p, qq) => `${pre}${q}${rewriteLinkPath(p)}${qq}`);
+
+  // [label]: path — site-local when an image uses the label, a link otherwise
+  const imageLabels = new Set(
+    [...markdown.matchAll(IMAGE_REF_RE)].map((m) => normalizeLabel(m[2] || m[1])),
+  );
+  out = out.replace(DEFINITION_RE, (_m, open, label, mid, p, rest) => {
+    const url = imageLabels.has(normalizeLabel(label)) ? rewriteAssetPath(p) : rewriteLinkPath(p);
+    return `${open}${label}${mid}${url}${rest}`;
+  });
+
   return out;
+}
+
+/**
+ * Which of a benchmark's published files become WebP: PNG and JPEG images that are not
+ * animated, unless the `.webp` name is taken by another published file (then it is copied as is).
+ *
+ * @param {string[]} assets - sorted, relative to srcDir
+ * @param {string} srcDir
+ * @returns {Map<string, string>} asset → its `.webp` path
+ */
+function planWebpRenames(assets, srcDir) {
+  const taken = new Set(assets.map((a) => a.toLowerCase()));
+  const renames = new Map();
+  for (const rel of assets) {
+    if (!isConvertible(rel) || isAnimatedPng(path.join(srcDir, rel))) continue;
+    const to = webpName(rel);
+    if (taken.has(to.toLowerCase())) continue;
+    taken.add(to.toLowerCase());
+    renames.set(rel, to);
+  }
+  return renames;
+}
+
+/**
+ * The path, relative to the benchmark folder, of a URL under `/benchmarks/<slug>/`, with any
+ * query or fragment dropped; null if it would leave the folder.
+ *
+ * @param {string} rest - the URL after `/benchmarks/<slug>/`
+ */
+function relPathOfUrl(rest) {
+  let decoded = rest.split(/[?#]/)[0];
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch {
+    /* keep as written */
+  }
+  const rel = path.posix.normalize(decoded);
+  if (!rel || rel === '.' || rel === '..' || rel.startsWith('../') || rel.startsWith('/')) return null;
+  return rel;
+}
+
+/**
+ * The files of a benchmark folder that its published markdown loads from the site
+ * (`/benchmarks/<slug>/...` URLs in the rendered page), sorted. A URL whose file is not in
+ * the folder fails the sync.
+ *
+ * @param {string[]} markdowns - the published markdown, after rewriting
+ * @param {string} slug
+ * @param {string} srcDir - the benchmark folder in the source repo
+ * @returns {string[]} posix paths relative to srcDir
+ */
+function assetsUsedBy(markdowns, slug, srcDir) {
+  const prefix = `/benchmarks/${slug}/`;
+  const used = new Set();
+  for (const markdown of markdowns) {
+    for (const { url } of renderedUrls(markdown)) {
+      if (!isSiteUrl(url) || !url.startsWith(prefix)) continue;
+      const rel = relPathOfUrl(url.slice(prefix.length));
+      if (!rel || !isFile(path.join(srcDir, rel))) {
+        throw new Error(`${slug}: the README loads ${url}, which is not a file in its folder (${srcDir})`);
+      }
+      used.add(rel);
+    }
+  }
+  return [...used].sort();
+}
+
+/**
+ * Fail the sync if any site URL in the published markdown would not resolve: a relative URL
+ * (it would resolve against the page's own URL), a `/benchmarks/<slug>` page that is not a
+ * benchmark, or a `/benchmarks/<slug>/<file>` that was not written to public/benchmarks/.
+ * Other site paths are app routes and are not checked.
+ *
+ * @param {string[]} slugs
+ */
+async function assertPublishedUrlsResolve(slugs) {
+  const known = new Set(slugs);
+  const problems = [];
+  let checked = 0;
+  for (const slug of slugs) {
+    const dir = path.join(GENERATED_DIR, 'benchmarks', slug);
+    for (const name of (await fs.readdir(dir)).filter((n) => n.endsWith('.md')).sort()) {
+      for (const { tag, attr, url } of renderedUrls(await fs.readFile(path.join(dir, name), 'utf8'))) {
+        if (!isSiteUrl(url)) continue;
+        checked++;
+        const where = `${slug}/${name}: <${tag} ${attr}="${url}">`;
+        if (!url.startsWith('/')) {
+          problems.push(`${where} is relative to the page URL`);
+          continue;
+        }
+        const m = url.match(/^\/benchmarks\/([^/?#]+)(?:\/([^?#]*))?/);
+        if (!m) continue;
+        let target = m[1];
+        try {
+          target = decodeURIComponent(target);
+        } catch {
+          /* keep as written */
+        }
+        if (!m[2]) {
+          if (!known.has(target)) problems.push(`${where} is not a benchmark page`);
+          continue;
+        }
+        const rel = relPathOfUrl(m[2]);
+        if (!rel || !isFile(path.join(PUBLIC_BENCHMARKS_DIR, target, rel))) problems.push(`${where} is not a published file`);
+      }
+    }
+  }
+  if (problems.length) {
+    throw new Error(`${problems.length} URL(s) in the published markdown would not resolve:\n  ${problems.join('\n  ')}`);
+  }
+  log(`✓ ${checked} site URLs in the published markdown resolve`);
+}
+
+/** @param {string} p */
+function isFile(p) {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /** @param {Manifest} manifest */
