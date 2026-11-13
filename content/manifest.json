@@ -1,0 +1,457 @@
+{
+  "$schema": "./manifest.schema.json",
+  "sourceRepo": {
+    "owner": "abucnasty",
+    "repo": "factorio-benchmarks",
+    "branch": "master"
+  },
+  "lfsWorkerUrl": "https://factorio-lfs.abucnasty.workers.dev",
+  "topics": [
+    { "id": "inserters", "label": "Inserters & clocking" },
+    { "id": "science", "label": "Science builds" },
+    { "id": "mining", "label": "Mining" },
+    { "id": "engine", "label": "Engine & method" },
+    { "id": "vehicles", "label": "Vehicles & chests" },
+    { "id": "space", "label": "Space platforms" }
+  ],
+  "benchmarks": [
+    {
+      "slug": "44k-inserter-clocks",
+      "source": "benchmarks/2025-07-14-44k-inserter-clocks",
+      "title": "44k Inserter Clocks",
+      "topic": "inserters",
+      "date": "2025-07-14"
+    },
+    {
+      "slug": "stack-inserter-labs",
+      "source": "benchmarks/2025-07-14-stack-inserter-labs",
+      "title": "Stack Inserter Labs",
+      "topic": "inserters",
+      "date": "2025-07-14"
+    },
+    {
+        "slug": "2026-01-25-linux-vs-windows",
+        "source": "benchmarks/2026-01-25-linux-vs-windows",
+        "title": "Linux vs Windows Performance",
+        "topic": "engine",
+        "date": "2026-01-25",
+        "featured": true,
+        "chart": {
+            "scenarios": [
+                { "name": "Linux standalone", "csv": "results_multi_run/dmb_main_research_prod_linux_standalone_verbose_metrics.csv" },
+                { "name": "Linux + mimalloc", "csv": "results_multi_run/dmb_main_research_prod_linux_standalone_mimalloc_verbose_metrics.csv" },
+                { "name": "Linux + mimalloc + huge_pages 8GB", "csv": "results_multi_run/dmb_main_research_prod_linux_standalone_mimalloc_huge_pages_8GB_verbose_metrics.csv" },
+                { "name": "Windows standalone", "csv": "results_multi_run/dmb_main_research_prod_windows_standalone_verbose_metrics.csv" },
+                { "name": "Windows + mimalloc", "csv": "results_multi_run/dmb_main_research_prod_windows_standalone_mimalloc_verbose_metrics.csv" }
+            ]
+        }
+    },
+    {
+      "slug": "2026-04-17-gleba-throttling",
+      "source": "benchmarks/2026-04-17-gleba-throttling",
+      "title": "Gleba Throttling",
+      "topic": "science",
+      "date": "2026-04-17",
+      "chart": {
+        "scenarios": [
+          { "name": "Gleba throttle", "csv": "results/dmb_main_gleba_throttle_verbose_metrics.csv" },
+          { "name": "Nauvis void", "csv": "results/dmb_main_nauvis_void_verbose_metrics.csv" }
+        ]
+      }
+    },
+    {
+      "slug": "2026-04-05-purple-q1-vs-q2",
+      "source": "benchmarks/2026-04-05-purple-q1-vs-q2",
+      "title": "Purple Science Q1 vs Q2",
+      "topic": "science",
+      "date": "2026-04-05",
+      "chart": {
+        "maxTicks": 36000,
+        "groups": [
+          {
+            "name": "Mining Productivity",
+            "scenarios": [
+              { "name": "Q1", "csv": "results/dmb_purple_q1_mining_prod_verbose_metrics.csv" },
+              { "name": "Q2", "csv": "results/dmb_purple_q2_mining_prod_verbose_metrics.csv" }
+            ]
+          },
+          {
+            "name": "Worker Robot Speed",
+            "scenarios": [
+              { "name": "Q1", "csv": "results/dmb_purple_q1_worker_robot_speed_verbose_metrics.csv" },
+              { "name": "Q2", "csv": "results/dmb_purple_q2_worker_robot_speed_verbose_metrics.csv" }
+            ]
+          },
+          {
+            "name": "Q1 Science",
+            "scenarios": [
+              { "name": "Q1 idle", "csv": "results/dmb_purple_q1_idle_verbose_metrics.csv" },
+              { "name": "Q1 mining prod", "csv": "results/dmb_purple_q1_mining_prod_verbose_metrics.csv" },
+              { "name": "Q1 worker robot speed", "csv": "results/dmb_purple_q1_worker_robot_speed_verbose_metrics.csv" }
+            ]
+          },
+          {
+            "name": "Q2 Science",
+            "scenarios": [
+              { "name": "Q2 idle", "csv": "results/dmb_purple_q2_idle_verbose_metrics.csv" },
+              { "name": "Q2 mining prod", "csv": "results/dmb_purple_q2_mining_prod_verbose_metrics.csv" },
+              { "name": "Q2 worker robot speed", "csv": "results/dmb_purple_q2_worker_robot_speed_verbose_metrics.csv" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "slug": "2026-03-26-silo-crafting-speed",
+      "source": "benchmarks/2026-03-26-silo-crafting-speed",
+      "title": "Silo Crafting Speed",
+      "topic": "science",
+      "date": "2026-03-26",
+      "chart": {
+        "scenarios": [
+          { "name": "Q3 baseline", "csv": "results/silo_q3_verbose_metrics.csv" },
+          { "name": "Q5 (no beacons)", "csv": "results/silo_q5_verbose_metrics.csv" },
+          { "name": "Q5 + 2 beacons", "csv": "results/silo_q5_beacon_02_verbose_metrics.csv" },
+          { "name": "Q5 + 4 beacons", "csv": "results/silo_q5_beacon_04_verbose_metrics.csv" },
+          { "name": "Q5 + 6 beacons", "csv": "results/silo_q5_beacon_06_verbose_metrics.csv" },
+          { "name": "Q5 + 8 beacons", "csv": "results/silo_q5_beacon_08_verbose_metrics.csv" },
+          { "name": "Q5 + 10 beacons", "csv": "results/silo_q5_beacon_10_verbose_metrics.csv" }
+        ]
+      }
+    },
+    {
+      "slug": "2026-03-22-space-science-quality",
+      "source": "benchmarks/2026-03-22-space-science-quality",
+      "title": "Space Science Quality",
+      "topic": "science",
+      "date": "2026-03-22",
+      "featured": true,
+      "chart": {
+        "maxTicks": 54000,
+        "window": 60,
+        "scenarios": [
+          { "name": "Q1 7680 SPS", "csv": "results_three_hour/space_science_Q1_7680SPS_Heisenberg_MK2_verbose_metrics.csv" },
+          { "name": "Q2 3840 SPS", "csv": "results_three_hour/space_science_Q2_3840SPS_Saul_verbose_metrics.csv" },
+          { "name": "Q3 2560 SPS", "csv": "results_three_hour/space_science_Q3_2560SPS_Jesse_MK2_verbose_metrics.csv" },
+          { "name": "Q4 1920 SPS", "csv": "results_three_hour/space_science_Q4_1920SPS_Skylar_verbose_metrics.csv" },
+          { "name": "Q5 1280 SPS", "csv": "results_three_hour/space_science_Q5_1280SPS_Walt_MK2.8_verbose_metrics.csv" }
+        ]
+      }
+    },
+    {
+      "slug": "44k-underground-inserters",
+      "source": "benchmarks/2025-07-22-44k-underground-inserters",
+      "title": "44k Underground Inserters",
+      "topic": "inserters",
+      "date": "2025-07-22"
+    },
+    {
+      "slug": "uncommon-red-science-v4",
+      "source": "benchmarks/2025-08-18-uncommon-red-science-v4",
+      "title": "Uncommon Red Science V4",
+      "topic": "science",
+      "date": "2025-08-18"
+    },
+    {
+      "slug": "benchmark-variances",
+      "source": "benchmarks/2025-09-01-benchmark-variances",
+      "title": "Benchmark Variances",
+      "topic": "engine",
+      "date": "2025-09-01"
+    },
+    {
+      "slug": "beacons",
+      "source": "benchmarks/2025-09-12-beacons",
+      "title": "Beacon Entity Update Time",
+      "topic": "engine",
+      "date": "2025-09-12"
+    },
+    {
+      "slug": "wire-extenders",
+      "source": "benchmarks/2025-09-13-wire-extenders",
+      "title": "Wire Extenders",
+      "topic": "inserters",
+      "date": "2025-09-13"
+    },
+    {
+      "slug": "recycler-clocking",
+      "source": "benchmarks/2025-10-14-recycler-clocking",
+      "title": "Recycler Clocking",
+      "topic": "inserters",
+      "date": "2025-10-14"
+    },
+    {
+      "slug": "biolab-quality-science",
+      "source": "benchmarks/2025-10-18-biolab-quality-science",
+      "title": "Space Age Biolabs Impact by Science Quality & Research Type",
+      "topic": "science",
+      "date": "2025-10-18"
+    },
+    {
+      "slug": "railgun-voider",
+      "source": "benchmarks/2025-10-21-railgun-voider",
+      "title": "Railgun Voider",
+      "topic": "vehicles",
+      "date": "2025-10-21"
+    },
+    {
+      "slug": "chests",
+      "source": "benchmarks/2025-10-31-chests",
+      "title": "Chest Transfer",
+      "topic": "vehicles",
+      "date": "2025-10-31",
+      "chart": {
+        "groups": [
+          {
+            "name": "5 tiles",
+            "scenarios": [
+              { "name": "Iron chest", "csv": "5_tiles/results/bm_5_tiles_iron_chest_verbose_metrics.csv" },
+              { "name": "Iron chest (limited)", "csv": "5_tiles/results/bm_5_tiles_iron_chest_limited_verbose_metrics.csv" },
+              { "name": "Steel chest", "csv": "5_tiles/results/bm_5_tiles_steel_chest_verbose_metrics.csv" },
+              { "name": "Steel chest (limited)", "csv": "5_tiles/results/bm_5_tiles_steel_chest_limited_verbose_metrics.csv" },
+              { "name": "Steel Q5 chest", "csv": "5_tiles/results/bm_5_tiles_steel_q5_chest_verbose_metrics.csv" },
+              { "name": "Steel Q5 chest (limited)", "csv": "5_tiles/results/bm_5_tiles_steel_q5_chest_limited_verbose_metrics.csv" },
+              { "name": "Wood chest", "csv": "5_tiles/results/bm_5_tiles_wood_chest_verbose_metrics.csv" },
+              { "name": "Wood chest (limited)", "csv": "5_tiles/results/bm_5_tiles_wood_chest_limited_verbose_metrics.csv" },
+              { "name": "Car", "csv": "5_tiles/results/bm_5_tiles_car_verbose_metrics.csv" },
+              { "name": "Car (disabled)", "csv": "5_tiles/results/bm_5_tiles_car_disabled_verbose_metrics.csv" }
+            ]
+          },
+          {
+            "name": "5 tiles (backpressure)",
+            "scenarios": [
+              { "name": "Iron chest", "csv": "5_tiles_backpressure/results/bm_5_tiles_backpressure_iron_verbose_metrics.csv" },
+              { "name": "Iron chest (limited)", "csv": "5_tiles_backpressure/results/bm_5_tiles_backpressure_iron_limited_verbose_metrics.csv" },
+              { "name": "Iron chest (full)", "csv": "5_tiles_backpressure/results/bm_5_tiles_backpressure_iron_full_verbose_metrics.csv" },
+              { "name": "Steel chest", "csv": "5_tiles_backpressure/results/bm_5_tiles_backpressure_steel_verbose_metrics.csv" },
+              { "name": "Steel chest (limited)", "csv": "5_tiles_backpressure/results/bm_5_tiles_backpressure_steel_limited_verbose_metrics.csv" },
+              { "name": "Steel chest (full)", "csv": "5_tiles_backpressure/results/bm_5_tiles_backpressure_steel_full_verbose_metrics.csv" },
+              { "name": "Steel Q5 chest", "csv": "5_tiles_backpressure/results/bm_5_tiles_backpressure_steel_q5_verbose_metrics.csv" },
+              { "name": "Steel Q5 chest (limited)", "csv": "5_tiles_backpressure/results/bm_5_tiles_backpressure_steel_q5_limited_verbose_metrics.csv" },
+              { "name": "Steel Q5 chest (full)", "csv": "5_tiles_backpressure/results/bm_5_tiles_backpressure_steel_q5_full_verbose_metrics.csv" },
+              { "name": "Car (default)", "csv": "5_tiles_backpressure/results/bm_5_tiles_backpressure_car_default_verbose_metrics.csv" },
+              { "name": "Car (full)", "csv": "5_tiles_backpressure/results/bm_5_tiles_backpressure_car_full_verbose_metrics.csv" }
+            ]
+          },
+          {
+            "name": "7 tiles",
+            "scenarios": [
+              { "name": "3 inserter", "csv": "7_tiles/results/bm_7_tiles_3_inserter_verbose_metrics.csv" },
+              { "name": "3 inserter (limited)", "csv": "7_tiles/results/bm_7_tiles_3_inserter_limited_verbose_metrics.csv" },
+              { "name": "Car", "csv": "7_tiles/results/bm_7_tiles_car_verbose_metrics.csv" },
+              { "name": "Car (disabled)", "csv": "7_tiles/results/bm_7_tiles_car_disabled_verbose_metrics.csv" },
+              { "name": "Tank", "csv": "7_tiles/results/bm_7_tiles_tank_verbose_metrics.csv" },
+              { "name": "Tank (disabled)", "csv": "7_tiles/results/bm_7_tiles_tank_disabled_verbose_metrics.csv" }
+            ]
+          },
+          {
+            "name": "9 tiles",
+            "scenarios": [
+              { "name": "3 inserter (default)", "csv": "9_tiles/results/bm_9_tiles_3_inserter_default_verbose_metrics.csv" },
+              { "name": "3 inserter (limited)", "csv": "9_tiles/results/bm_9_tiles_3_inserter_limited_verbose_metrics.csv" },
+              { "name": "Wagon (default)", "csv": "9_tiles/results/bm_9_tiles_wagon_default_verbose_metrics.csv" },
+              { "name": "Wagon (limited empty)", "csv": "9_tiles/results/bm_9_tiles_wagon_limited_empty_verbose_metrics.csv" },
+              { "name": "Wagon filtered first coin", "csv": "9_tiles/results/bm_9_tiles_wagon_filtered_first_coin_verbose_metrics.csv" },
+              { "name": "Wagon filtered first empty", "csv": "9_tiles/results/bm_9_tiles_wagon_filtered_first_empty_verbose_metrics.csv" },
+              { "name": "Wagon filtered last coin", "csv": "9_tiles/results/bm_9_tiles_wagon_filtered_last_coin_verbose_metrics.csv" },
+              { "name": "Wagon filtered last empty", "csv": "9_tiles/results/bm_9_tiles_wagon_filtered_last_empty_verbose_metrics.csv" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "slug": "miners",
+      "source": "benchmarks/2025-11-02-miners",
+      "title": "Miners",
+      "topic": "mining",
+      "date": "2025-11-02"
+    },
+    {
+      "slug": "inserter-circuit-network",
+      "source": "benchmarks/2025-11-03-inserter-circuit-network",
+      "title": "Circuit Network Cost on Inserters without Pickups",
+      "topic": "inserters",
+      "date": "2025-11-03"
+    },
+    {
+      "slug": "vehicle-fuel",
+      "source": "benchmarks/2025-11-03-vehicle-fuel",
+      "title": "Cars / Tanks Equipment Grid and Fuel Impact",
+      "topic": "vehicles",
+      "date": "2025-11-03"
+    },
+    {
+      "slug": "particles-in-benchmarks",
+      "source": "benchmarks/2025-11-06-particles-in-benchmarks",
+      "title": "Particles in Benchmarks",
+      "topic": "engine",
+      "date": "2025-11-06",
+      "chart": {
+        "scenarios": [
+          { "name": "Editor closed · primary surface", "csv": "results/bm_particles_editor_closed_primary_surface_verbose_metrics.csv" },
+          { "name": "Editor closed · other surface", "csv": "results/bm_particles_editor_closed_other_surface_verbose_metrics.csv" },
+          { "name": "Editor open · primary surface", "csv": "results/bm_particles_editor_open_primary_surface_verbose_metrics.csv" },
+          { "name": "Editor open · other surface", "csv": "results/bm_particles_editor_open_other_surface_verbose_metrics.csv" }
+        ]
+      }
+    },
+    {
+      "slug": "tile-pollution",
+      "source": "benchmarks/2025-11-06-tile-pollution",
+      "title": "Impact of Pollution",
+      "topic": "engine",
+      "date": "2025-11-06"
+    },
+    {
+      "slug": "clocked-mining-drills",
+      "source": "benchmarks/2025-11-11-clocked-mining-drills",
+      "title": "Clocked Mining Drills",
+      "topic": "mining",
+      "date": "2025-11-11",
+      "featured": true,
+      "chart": {
+        "scenarios": [
+          { "name": "Clocked", "csv": "results/bm_mining_drill_clocked_verbose_metrics.csv" },
+          { "name": "Unclocked", "csv": "results/bm_mining_drill_unclocked_verbose_metrics.csv" }
+        ]
+      }
+    },
+    {
+      "slug": "inserter-clocking-for-labs",
+      "source": "benchmarks/inserter-clocking-for-labs",
+      "title": "Inserter Clocking For Labs",
+      "topic": "inserters"
+    },
+    {
+      "slug": "inserter-clocking-methods",
+      "source": "benchmarks/inserter-clocking-methods",
+      "title": "Inserter Clocking Methods",
+      "topic": "inserters"
+    },
+    {
+      "slug": "inserter-clocking-methods-output-throttled",
+      "source": "benchmarks/inserter-clocking-methods-output-throttled",
+      "title": "Inserter Clocking Methods Output Throttled",
+      "topic": "inserters"
+    },
+    {
+      "slug": "iron-smelter-inserter-throttle",
+      "source": "benchmarks/iron-smelter-inserter-throttle",
+      "title": "Iron Smelter Inserter Throttle",
+      "topic": "inserters"
+    },
+    {
+      "slug": "liquid-voiding-miners",
+      "source": "benchmarks/liquid-voiding-miners",
+      "title": "Liquid Voiding Miners",
+      "topic": "mining"
+    },
+    {
+      "slug": "pollution-control",
+      "source": "benchmarks/pollution-control",
+      "title": "Pollution Control",
+      "topic": "engine"
+    },
+    {
+      "slug": "uncommon-chemical-science-v2",
+      "source": "benchmarks/uncommon-chemical-science-v2",
+      "title": "Uncommon Chemical Science V2",
+      "topic": "science"
+    },
+    {
+      "slug": "uncommon-green-science-v2",
+      "source": "benchmarks/uncommon-green-science-v2",
+      "title": "Uncommon Green Science V2",
+      "topic": "science"
+    },
+    {
+      "slug": "uncommon-military-science",
+      "source": "benchmarks/uncommon-military-science",
+      "title": "Uncommon Military Science",
+      "topic": "science"
+    },
+    {
+      "slug": "uncommon-ore-voiding",
+      "source": "benchmarks/uncommon-ore-voiding",
+      "title": "Uncommon Ore Voiding",
+      "topic": "mining"
+    },
+    {
+      "slug": "uncommon-purple",
+      "source": "benchmarks/uncommon-purple",
+      "title": "Uncommon Purple",
+      "topic": "science",
+      "date": "2025-07-02"
+    },
+    {
+      "slug": "uncommon-red-science-v3",
+      "source": "benchmarks/uncommon-red-science-v3",
+      "title": "Uncommon Red Science V3",
+      "topic": "science"
+    },
+    {
+      "slug": "uncommon-stone-miners",
+      "source": "benchmarks/uncommon-stone-miners",
+      "title": "Uncommon Stone Miners",
+      "topic": "mining",
+      "date": "2026-04-15"
+    },
+    {
+      "slug": "2026-06-10-splitter-miners",
+      "source": "benchmarks/2026-06-10-splitter-miners",
+      "title": "Splitter Miners",
+      "topic": "mining",
+      "date": "2026-06-11"
+    },
+    {
+      "slug": "2026-06-30-vulcanus-stone-voiding",
+      "source": "benchmarks/2026-06-30-vulcanus-stone-voiding",
+      "title": "Vulcanus Stone Voiding",
+      "topic": "mining",
+      "date": "2026-06-30"
+    },
+    {
+      "slug": "2026-07-01-inserter-performance-2.1.9",
+      "source": "benchmarks/2026-07-01-inserter-performance-2.1.9",
+      "title": "Inserter Performance 2.0 vs 2.1",
+      "topic": "inserters",
+      "date": "2026-07-01"
+    },
+    {
+      "slug": "2026-07-03-mining-drill-performance-2-1-9",
+      "source": "benchmarks/2026-07-03-mining-drill-performance-2.1.9",
+      "title": "Mining Drill Performance Improvements in 2.1",
+      "topic": "mining",
+      "date": "2026-07-03"
+    },
+    {
+      "slug": "2026-07-09-automation-science-2.1.9",
+      "source": "benchmarks/2026-07-05-automation-science-2.1.9",
+      "title": "Automation Science Q1 vs Q2 in 2.1.9",
+      "topic": "science",
+      "date": "2026-07-09"
+    },
+    {
+      "slug": "2026-09-07-chunk-aligned-space-platforms",
+      "source": "benchmarks/2026-09-07-chunk-aligned-space-platforms",
+      "title": "Chunk Aligned Space Platforms",
+      "topic": "space",
+      "date": "2026-09-07"
+    },
+    {
+      "slug": "2026-09-11-disabled-collectors",
+      "source": "benchmarks/2026-09-11-disabled-collectors",
+      "title": "Disabled Collectors",
+      "topic": "space",
+      "date": "2026-09-11"
+    },
+    {
+      "slug": "2026-11-02-inserter-update-order",
+      "source": "benchmarks/2026-11-02-inserter-update-order",
+      "title": "Inserter Update Order",
+      "topic": "inserters",
+      "date": "2026-11-02"
+    }
+  ]
+}

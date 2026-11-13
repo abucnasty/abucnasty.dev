@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>abucnasty — Factorio benchmarks, blueprints, and tools</title>
+    <meta
+      name="description"
+      content="Factorio UPS benchmarks, megabase performance research, blueprint registry, and open-source tools by abucnasty. Compare entity update, transport line, and electric network costs across Factorio versions."
+    />
+    <meta
+      name="keywords"
+      content="Factorio, Factorio benchmarks, UPS, update per second, megabase, performance, blueprints, belt benchmarks, inserter clocks, mining drills, Space Age, Factorio 2.0, abucnasty"
+    />
+    <meta name="author" content="abucnasty" />
+    <link rel="canonical" href="https://abucnasty.github.io/" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="abucnasty" />
+    <meta property="og:title" content="abucnasty — Factorio benchmarks, blueprints, and tools" />
+    <meta
+      property="og:description"
+      content="UPS benchmarks, blueprint registry, and open-source tools for Factorio megabases. Reproducible saves, CSV results, and time-series charts."
+    />
+    <meta property="og:url" content="https://abucnasty.github.io/" />
+    <meta property="og:image" content="https://avatars.githubusercontent.com/u/213731755?v=4" />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="abucnasty — Factorio benchmarks, blueprints, and tools" />
+    <meta
+      name="twitter:description"
+      content="UPS benchmarks, blueprint registry, and open-source tools for Factorio megabases."
+    />
+    <meta name="twitter:image" content="https://avatars.githubusercontent.com/u/213731755?v=4" />
+
+    <link rel="icon" href="https://avatars.githubusercontent.com/u/213731755?v=4" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "abucnasty",
+        "url": "https://abucnasty.github.io/",
+        "description": "Factorio UPS benchmarks, blueprints, and open-source tools by abucnasty.",
+        "author": {
+          "@type": "Person",
+          "name": "abucnasty",
+          "url": "https://github.com/abucnasty",
+          "sameAs": [
+            "https://github.com/abucnasty",
+            "https://www.youtube.com/@abucnasty"
+          ]
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Restore the deep-link path that 404.html encoded as ?path=...
+      (function () {
+        var params = new URLSearchParams(window.location.search);
+        var path = params.get('path');
+        if (path) {
+          history.replaceState(null, '', path);
+        }
+      })();
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

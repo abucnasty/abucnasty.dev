@@ -1,0 +1,91 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout site
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Resolve source repo + sparse-checkout paths
+        id: manifest
+        run: |
+          set -euo pipefail
+          # Extract repo coords + the union of every benchmark `source` from
+          # content/manifest.json. Writes the path list to ./.sparse-paths and
+          # exposes the repo coords via step outputs.
+          node --input-type=module - <<'EOF'
+          import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+          const m = JSON.parse(readFileSync('content/manifest.json', 'utf8'));
+          const paths = new Set();
+          for (const b of m.benchmarks) if (b.source) paths.add(b.source);
+          writeFileSync('.sparse-paths', [...paths].join('\n') + '\n');
+          const out = process.env.GITHUB_OUTPUT;
+          appendFileSync(out, `owner=${m.sourceRepo.owner}\n`);
+          appendFileSync(out, `repo=${m.sourceRepo.repo}\n`);
+          appendFileSync(out, `branch=${m.sourceRepo.branch ?? 'master'}\n`);
+          EOF
+          echo "Sparse-checkout paths:"
+          cat .sparse-paths
+        shell: bash
+
+      - name: Sparse-checkout factorio-benchmarks
+        run: |
+          set -euo pipefail
+          OWNER='${{ steps.manifest.outputs.owner }}'
+          REPO='${{ steps.manifest.outputs.repo }}'
+          BRANCH='${{ steps.manifest.outputs.branch }}'
+          DEST="${RUNNER_TEMP}/${REPO}"
+          # blob:limit=1k: fetch every git-lfs pointer up front for the /saves index.
+          git clone --depth 1 --filter=blob:limit=1k --sparse \
+            --branch "${BRANCH}" \
+            "https://github.com/${OWNER}/${REPO}.git" "${DEST}"
+          mapfile -t SPARSE_PATHS < .sparse-paths
+          (cd "${DEST}" && git sparse-checkout set -- "${SPARSE_PATHS[@]}")
+          (cd "${DEST}" && git lfs pull --include="*.csv")
+          echo "FACTORIO_BENCHMARKS_PATH=${DEST}" >> "$GITHUB_ENV"
+        shell: bash
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_YT_API_KEY: ${{ secrets.VITE_YT_API_KEY }}
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
