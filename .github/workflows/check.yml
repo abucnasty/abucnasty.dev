@@ -29,27 +29,22 @@ jobs:
           node-version: '24'
           cache: 'npm'
 
-      # The same two steps as in deploy.yml; keep them in step.
-      - name: Resolve source repo + sparse-checkout paths
+      # The same three steps as in deploy.yml; keep them in step.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Resolve source repo
         id: manifest
         run: |
           set -euo pipefail
-          # Extract repo coords + the union of every benchmark `source` from
-          # content/manifest.json. Writes the path list to ./.sparse-paths and
-          # exposes the repo coords via step outputs.
           node --input-type=module - <<'EOF'
-          import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+          import { readFileSync, appendFileSync } from 'node:fs';
           const m = JSON.parse(readFileSync('content/manifest.json', 'utf8'));
-          const paths = new Set();
-          for (const b of m.benchmarks) if (b.source) paths.add(b.source);
-          writeFileSync('.sparse-paths', [...paths].join('\n') + '\n');
           const out = process.env.GITHUB_OUTPUT;
           appendFileSync(out, `owner=${m.sourceRepo.owner}\n`);
           appendFileSync(out, `repo=${m.sourceRepo.repo}\n`);
           appendFileSync(out, `branch=${m.sourceRepo.branch ?? 'master'}\n`);
           EOF
-          echo "Sparse-checkout paths:"
-          cat .sparse-paths
         shell: bash
 
       - name: Sparse-checkout factorio-benchmarks
@@ -63,14 +58,19 @@ jobs:
           git clone --depth 1 --filter=blob:limit=1k --sparse \
             --branch "${BRANCH}" \
             "https://github.com/${OWNER}/${REPO}.git" "${DEST}"
+          # First only the benchmark READMEs: their frontmatter says which folders are published.
+          (cd "${DEST}" && git sparse-checkout set --no-cone '/benchmarks/*/README.md')
+          node --input-type=module - "${DEST}" > .sparse-paths <<'EOF'
+          import { discoverBenchmarks } from './scripts/lib/benchmark-frontmatter.mjs';
+          for (const b of discoverBenchmarks(process.argv[2], null)) console.log(b.source);
+          EOF
+          echo "Sparse-checkout paths:"
+          cat .sparse-paths
           mapfile -t SPARSE_PATHS < .sparse-paths
-          (cd "${DEST}" && git sparse-checkout set -- "${SPARSE_PATHS[@]}")
+          (cd "${DEST}" && git sparse-checkout set --cone -- "${SPARSE_PATHS[@]}")
           (cd "${DEST}" && git lfs pull --include="*.csv")
           echo "FACTORIO_BENCHMARKS_PATH=${DEST}" >> "$GITHUB_ENV"
         shell: bash
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
 
       - name: Build
         # sync-content + sync-blog-images + tsc -b (covers `npm run lint`) + vite build

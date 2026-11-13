@@ -27,7 +27,7 @@ export interface BenchmarkEntry {
   platform?: string;
   /** From the README's `**CPU:**` header line, e.g. "Ryzen 9800X3D". */
   cpu?: string;
-  /** Id of an entry in `ContentIndex.topics`; set in the manifest. */
+  /** Id of an entry in `ContentIndex.topics`; set in the benchmark README's frontmatter. */
   topic?: string;
   /** The question the benchmark asks, as one line of plain text (from its "Question" section). */
   question?: string;
@@ -85,7 +85,7 @@ export interface SaveFolderMeta {
   /** Set, along with `benchmark_slug`, when the folder is a curated benchmark's `source`. */
   title?: string;
   benchmark_slug?: string;
-  /** `YYYY-MM-DD`: from the manifest, else the folder-name prefix. */
+  /** `YYYY-MM-DD`: from the benchmark's frontmatter, else the folder-name prefix. */
   benchmark_date?: string;
   /** From the folder's README. */
   factorio_version?: string;

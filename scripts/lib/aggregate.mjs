@@ -26,7 +26,7 @@ import { createInterface } from 'node:readline';
  */
 
 /**
- * Default metric allowlist when the manifest entry doesn't specify one.
+ * Default metric allowlist when the benchmark's chart config doesn't specify one.
  * Mirrors the metrics belt-charts has explicit styling for, ordered roughly
  * by importance for UPS analysis.
  */
