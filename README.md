@@ -1,8 +1,10 @@
 # abucnasty.dev
 
-Source for abucnasty's Factorio site: UPS benchmark write-ups, a browser for every save in [abucnasty/factorio-benchmarks](https://github.com/abucnasty/factorio-benchmarks), a blueprint catalog, tools, and a blog. It is a single-page app built with Vite 5, React 18, TypeScript, MUI and React Router (`BrowserRouter`).
+Source for abucnasty's Factorio site: UPS benchmark write-ups, a browser for every save in [abucnasty/factorio-benchmarks](https://github.com/abucnasty/factorio-benchmarks), a blueprint catalog, tools, and a blog. It is a single-page app built with Vite 8, React 18, TypeScript, MUI and React Router (`BrowserRouter`).
 
 ## Run it locally
+
+Vite 8 needs Node 20.19+ or 22.12+; CI uses Node 24.
 
 The build reads a local git clone of factorio-benchmarks (any kind: full, shallow, partial or sparse, but a git clone, not an exported copy, because the save index is read from git objects). It looks in `../factorio/factorio-benchmarks`, or wherever `FACTORIO_BENCHMARKS_PATH` points. Chart CSVs in that repo are in git-lfs, so run `git lfs pull --include="*.csv"` there or the sync fails.
 
