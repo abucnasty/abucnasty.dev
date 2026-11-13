@@ -9,6 +9,8 @@
  * - Only the files that rewritten markdown loads from the site (its images) are copied,
  *   preserving sub-paths, to public/benchmarks/<slug>/. The set is read off the markdown as
  *   the site renders it (scripts/lib/rendered-urls.mjs); nothing else in the folder is published.
+ *   PNG and JPEG images are published as WebP at most 1600 px wide (scripts/lib/webp.mjs), and
+ *   the markdown is rewritten to load the `.webp` files; SVGs and animated images are copied as is.
  * - `.zip` files are NOT copied; the index gets a download URL on the LFS worker
  *   (`manifest.lfsWorkerUrl`) built from the file's git-lfs object id at HEAD.
  * - Relative links in a README (markdown, reference-style or HTML `<a href>`) point at GitHub:
@@ -38,6 +40,7 @@ import { stripOwnToc } from './lib/strip-toc.mjs';
 import { findSection, removeSection, plainFirstParagraph } from './lib/readme-sections.mjs';
 import { buildSaveIndex, createHeadReader } from './lib/save-index.mjs';
 import { renderedUrls, isSiteUrl } from './lib/rendered-urls.mjs';
+import { convertToWebp, isAnimatedPng, isConvertible, mapPool, webpName, MAX_WIDTH, LOSSY_QUALITY } from './lib/webp.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,6 +52,9 @@ dotenv.config({ path: path.join(ROOT, '.env.local'), override: true });
 const MANIFEST_PATH = path.join(ROOT, 'content', 'manifest.json');
 const GENERATED_DIR = path.join(ROOT, 'src', 'generated');
 const PUBLIC_BENCHMARKS_DIR = path.join(ROOT, 'public', 'benchmarks');
+
+/** @type {{ src: string, dest: string }[]} images to convert to WebP, queued by syncBenchmark */
+const imageJobs = [];
 
 const SOURCE_REPO_PATH =
   process.env.FACTORIO_BENCHMARKS_PATH ??
@@ -97,6 +103,7 @@ async function main() {
     benchmarks.push(result);
     log(`✓ ${entry.slug} (${result.assetCount} assets, ${result.saves.length} saves)`);
   }
+  await convertImages();
   await assertPublishedUrlsResolve(benchmarks.map((b) => b.slug));
 
   const total = benchmarks.length;
@@ -151,8 +158,8 @@ async function syncBenchmark(entry, githubBase, branch, rawBase, treeBase, lfsWo
 
   const files = await walk(srcDir);
   const saves = [];
-  /** @type {Record<string, string>} published markdown file name → its text */
-  let published = {};
+  /** @type {(renames?: Map<string, string>) => Record<string, string>} published markdown file name → its text */
+  let renderMarkdown = () => ({});
   let factorioVersion;
   let platform;
   let cpu;
@@ -210,23 +217,30 @@ async function syncBenchmark(entry, githubBase, branch, rawBase, treeBase, lfsWo
       const lifted = liftQuestionAndAnswer(stripped);
       ({ question, finding } = lifted);
       const linkRewrites = planLinkRewrites(stripped, entry.source, treeBase, lfsWorkerUrl, headReader);
-      const rewrite = (md) => rewriteMarkdownAssetPaths(md, entry.slug, rawGithubDir, linkRewrites);
-      published = { 'README.md': rewrite(lifted.readme) };
-      if (lifted.questionBody) published['question.md'] = rewrite(lifted.questionBody) + '\n';
-      if (lifted.answerBody) published['answer.md'] = rewrite(lifted.answerBody) + '\n';
+      renderMarkdown = (renames) => {
+        const rewrite = (md) => rewriteMarkdownAssetPaths(md, entry.slug, rawGithubDir, linkRewrites, renames);
+        const out = { 'README.md': rewrite(lifted.readme) };
+        if (lifted.questionBody) out['question.md'] = rewrite(lifted.questionBody) + '\n';
+        if (lifted.answerBody) out['answer.md'] = rewrite(lifted.answerBody) + '\n';
+        return out;
+      };
       continue;
     }
     // Any other file is published only if the markdown loads it; see below.
   }
 
-  for (const [name, text] of Object.entries(published)) {
+  // Find the files the markdown loads, decide which become WebP, then rewrite the markdown
+  // again to load those. Conversions are queued in `imageJobs` and run for all benchmarks at once.
+  const assets = assetsUsedBy(Object.values(renderMarkdown()), entry.slug, srcDir);
+  const renames = planWebpRenames(assets, srcDir);
+  for (const [name, text] of Object.entries(renderMarkdown(renames))) {
     await fs.writeFile(path.join(outMdDir, name), text);
   }
-  const assets = assetsUsedBy(Object.values(published), entry.slug, srcDir);
   for (const rel of assets) {
-    const dest = path.join(outAssetsDir, rel);
+    const dest = path.join(outAssetsDir, renames.get(rel) ?? rel);
     await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.copyFile(path.join(srcDir, rel), dest);
+    if (renames.has(rel)) imageJobs.push({ src: path.join(srcDir, rel), dest });
+    else await fs.copyFile(path.join(srcDir, rel), dest);
   }
   const assetCount = assets.length;
 
@@ -248,6 +262,19 @@ async function syncBenchmark(entry, githubBase, branch, rawBase, treeBase, lfsWo
     assetCount,
     timeseries,
   };
+}
+
+/** Run the queued WebP conversions, a few at a time, and log what they saved. */
+async function convertImages() {
+  const started = Date.now();
+  const results = await mapPool(imageJobs, ({ src, dest }) => convertToWebp(src, dest));
+  const sum = (key) => results.reduce((total, r) => total + r[key], 0);
+  const lossless = results.filter((r) => r.lossless).length;
+  const mb = (bytes) => (bytes / 1e6).toFixed(1);
+  log(
+    `✓ ${results.length} images as WebP (≤${MAX_WIDTH}px; ${lossless} lossless, ${results.length - lossless} at q${LOSSY_QUALITY}): ` +
+      `${mb(sum('bytesIn'))} MB → ${mb(sum('bytesOut'))} MB in ${((Date.now() - started) / 1000).toFixed(1)} s`,
+  );
 }
 
 /**
@@ -484,18 +511,30 @@ function planLinkRewrites(markdown, source, treeBase, lfsWorkerUrl, headReader) 
  * @param {string} slug
  * @param {string|null} [githubRawDir] - raw GitHub URL prefix for the benchmark source dir
  * @param {Map<string, string>} [linkRewrites] - relative link target → replacement URL
+ * @param {Map<string, string>} [assetRenames] - asset path (relative to the folder) → the path it is published at
  */
-function rewriteMarkdownAssetPaths(markdown, slug, githubRawDir = null, linkRewrites = new Map()) {
+function rewriteMarkdownAssetPaths(markdown, slug, githubRawDir = null, linkRewrites = new Map(), assetRenames = new Map()) {
   const prefix = `/benchmarks/${slug}`;
+
+  // `/benchmarks/<slug>/a/b.png?x` → `/benchmarks/<slug>/a/b.webp?x` when a/b.png is published as WebP.
+  const renamed = (url) => {
+    if (!url.startsWith(`${prefix}/`)) return url;
+    const suffixAt = url.search(/[?#]/);
+    const pathPart = suffixAt < 0 ? url : url.slice(0, suffixAt);
+    const rel = relPathOfUrl(pathPart.slice(prefix.length + 1));
+    const to = rel && assetRenames.get(rel);
+    if (!to) return url;
+    return `${pathPart.slice(0, pathPart.length - path.posix.extname(rel).length)}${path.posix.extname(to)}${suffixAt < 0 ? '' : url.slice(suffixAt)}`;
+  };
 
   const rewriteAssetPath = (p) => {
     const trimmed = p.trim();
     if (!trimmed) return trimmed;
     if (/^[a-z]+:/i.test(trimmed)) return trimmed; // http:, https:, mailto:, data:
     if (trimmed.startsWith('#')) return trimmed;
-    if (trimmed.startsWith('/')) return trimmed; // already site-absolute
+    if (trimmed.startsWith('/')) return renamed(trimmed); // already site-absolute
     const normalized = trimmed.replace(/^\.\//, '');
-    return `${prefix}/${normalized}`;
+    return renamed(`${prefix}/${normalized}`);
   };
 
   const rewriteLinkPath = (p) => {
@@ -542,6 +581,27 @@ function rewriteMarkdownAssetPaths(markdown, slug, githubRawDir = null, linkRewr
   });
 
   return out;
+}
+
+/**
+ * Which of a benchmark's published files become WebP: PNG and JPEG images that are not
+ * animated, unless the `.webp` name is taken by another published file (then it is copied as is).
+ *
+ * @param {string[]} assets - sorted, relative to srcDir
+ * @param {string} srcDir
+ * @returns {Map<string, string>} asset → its `.webp` path
+ */
+function planWebpRenames(assets, srcDir) {
+  const taken = new Set(assets.map((a) => a.toLowerCase()));
+  const renames = new Map();
+  for (const rel of assets) {
+    if (!isConvertible(rel) || isAnimatedPng(path.join(srcDir, rel))) continue;
+    const to = webpName(rel);
+    if (taken.has(to.toLowerCase())) continue;
+    taken.add(to.toLowerCase());
+    renames.set(rel, to);
+  }
+  return renames;
 }
 
 /**
