@@ -50,6 +50,10 @@ The Worker sends `Referer: <SITE_URL>/` on its YouTube request, so the key can k
 
 The site is a Cloudflare Worker that serves `dist/` as static assets, plus the script in `worker/` (`wrangler.jsonc`). Paths that match no file return `index.html` with status 200, so the client-side router handles deep links.
 
+It is served at `https://abucnasty.dev`, a custom domain in `routes` in `wrangler.jsonc` (wrangler creates its DNS record and certificate on deploy), and still at the `workers.dev` address, which `workers_dev` keeps on as a preview. `www.abucnasty.dev` is not attached to the Worker; a Redirect Rule on the zone sends it to `https://abucnasty.dev` with 301, keeping path and query. Keep `SITE_URL` and the canonical, `og:url` and JSON-LD `url` in `index.html` on the same origin; `npm test` checks that they agree.
+
+Cloudflare Web Analytics is a dashboard setting (automatic setup on the proxied zone), not a script in this repo.
+
 On every push to `main` (or a manual run), `.github/workflows/deploy.yml`:
 
 1. reads `content/manifest.json` and sparse-clones factorio-benchmarks with only the curated paths checked out (`--filter=blob:limit=1k`, so every git-lfs pointer still arrives for the save index), then pulls the chart CSVs from git-lfs;
