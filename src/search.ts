@@ -2,8 +2,8 @@
 // NOT imported here (it is its own chunk) and blueprints come from the live
 // catalog; the dialog loads both on demand and hands them to `saveEntries` and
 // `blueprintEntries`.
-import index from './generated/index.json';
-import type { ContentIndex } from './content';
+import summary from './generated/summary.json';
+import type { ContentSummary } from './content';
 import { blueprintRoute, categoryName, folderName, isListed, type Catalog } from './catalog';
 import { blogPosts } from './blog/registry';
 import { toolSections, tutorials } from './data/tools';
@@ -33,7 +33,8 @@ export const SEARCH_GROUPS: Array<{ kind: SearchKind; label: string }> = [
   { kind: 'save', label: 'Save files' },
 ];
 
-const content = index as ContentIndex;
+// The benchmarks' text fields only (summary.json, shared with Home), not the whole index.json.
+const content = summary as ContentSummary;
 
 const hay = (...parts: Array<string | undefined>) =>
   parts
