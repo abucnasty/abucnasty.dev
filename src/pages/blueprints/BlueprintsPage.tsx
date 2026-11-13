@@ -1,8 +1,6 @@
 // The Blueprints page: an index of names beside one big plate that takes the
 // shape of the build. Everything comes from the live catalog.
-import '@fontsource/titillium-web/400.css';
-import '@fontsource/titillium-web/600.css';
-import '@fontsource/titillium-web/700.css';
+import './titillium.css';
 import { useCallback, useEffect, useState } from 'react';
 import { Box, useMediaQuery, useTheme } from '@mui/material';
 import { Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
