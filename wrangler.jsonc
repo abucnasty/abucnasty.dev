@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "abucnasty-dev",
+  "compatibility_date": "2026-11-10",
+  // Static assets only: no Worker script yet. Add "main" (and "run_worker_first"
+  // for the paths it should handle) when the site needs server-side routes.
+  "assets": {
+    "directory": "./dist",
+    // Unknown paths get index.html with a 200, so React Router handles deep links.
+    "not_found_handling": "single-page-application"
+  },
+  // Served at abucnasty-dev.<account subdomain>.workers.dev until a custom domain is added.
+  "workers_dev": true
+}

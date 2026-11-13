@@ -35,3 +35,7 @@ PLAN.md
 
 # Layout check screenshots
 check-output
+
+# Wrangler local state and local Worker secrets
+.wrangler
+.dev.vars*

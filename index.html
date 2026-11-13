@@ -60,16 +60,6 @@
   </head>
   <body>
     <div id="root"></div>
-    <script>
-      // Restore the deep-link path that 404.html encoded as ?path=...
-      (function () {
-        var params = new URLSearchParams(window.location.search);
-        var path = params.get('path');
-        if (path) {
-          history.replaceState(null, '', path);
-        }
-      })();
-    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

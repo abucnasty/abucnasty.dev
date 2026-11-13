@@ -77,7 +77,7 @@ function sortFolders(
 export function Saves() {
   const { tree, failed } = useSaveTree();
   // Folder lives in the URL path, search + sort in the query string, so every
-  // view can be linked to. (`?path=` is taken by the 404.html deep-link shim.)
+  // view can be linked to.
   const path = (useParams()['*'] ?? '').replace(/^\/+|\/+$/g, '');
   const [params, setParams] = useSearchParams();
   const query = params.get('q') ?? '';

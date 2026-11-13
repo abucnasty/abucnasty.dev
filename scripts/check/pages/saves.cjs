@@ -369,11 +369,6 @@ module.exports = {
     await page.waitForSelector(crumbsSel);
     expect('trailing slash is tolerated', await page.isVisible(cardSel));
 
-    // GitHub Pages 404 shim
-    await goto(page, '/?path=' + encodeURIComponent(`${chainRoute}?q=${term}`));
-    await page.waitForSelector(fileRowsSel);
-    expect('404 shim restores folder and ?q', (await where(page)) === `${chainRoute}?q=${term}` && (await page.$$(fileRowsSel)).length === Math.min(hitsTerm.length, 100), await where(page));
-
     // a top-level folder that is not a curated benchmark
     const plain = tops.find((t) => !meta[t.path]?.title);
     if (plain) {

@@ -1,5 +1,5 @@
 {
-  "name": "abucnasty.github.io",
+  "name": "abucnasty.dev",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,7 +9,8 @@
     "build": "node scripts/sync-content.mjs && node scripts/sync-blog-images.mjs && tsc -b && vite build",
     "preview": "vite preview",
     "lint": "tsc -b --noEmit",
-    "check": "node scripts/check/run.cjs"
+    "check": "node scripts/check/run.cjs",
+    "deploy": "wrangler deploy"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -36,6 +37,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "playwright": "1.63.0",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "wrangler": "^4.161.0"
   }
 }
