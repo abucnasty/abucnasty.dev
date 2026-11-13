@@ -1,0 +1,90 @@
+name: Checks
+
+# Every pull request: build (content sync, type-check, bundle), the Worker's unit tests, a
+# dry-run of the Worker deploy, and the page checks of the critical flows. Needs no secrets,
+# so it also runs for pull requests from forks.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout site
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      # The same two steps as in deploy.yml; keep them in step.
+      - name: Resolve source repo + sparse-checkout paths
+        id: manifest
+        run: |
+          set -euo pipefail
+          # Extract repo coords + the union of every benchmark `source` from
+          # content/manifest.json. Writes the path list to ./.sparse-paths and
+          # exposes the repo coords via step outputs.
+          node --input-type=module - <<'EOF'
+          import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+          const m = JSON.parse(readFileSync('content/manifest.json', 'utf8'));
+          const paths = new Set();
+          for (const b of m.benchmarks) if (b.source) paths.add(b.source);
+          writeFileSync('.sparse-paths', [...paths].join('\n') + '\n');
+          const out = process.env.GITHUB_OUTPUT;
+          appendFileSync(out, `owner=${m.sourceRepo.owner}\n`);
+          appendFileSync(out, `repo=${m.sourceRepo.repo}\n`);
+          appendFileSync(out, `branch=${m.sourceRepo.branch ?? 'master'}\n`);
+          EOF
+          echo "Sparse-checkout paths:"
+          cat .sparse-paths
+        shell: bash
+
+      - name: Sparse-checkout factorio-benchmarks
+        run: |
+          set -euo pipefail
+          OWNER='${{ steps.manifest.outputs.owner }}'
+          REPO='${{ steps.manifest.outputs.repo }}'
+          BRANCH='${{ steps.manifest.outputs.branch }}'
+          DEST="${RUNNER_TEMP}/${REPO}"
+          # blob:limit=1k: fetch every git-lfs pointer up front for the /saves index.
+          git clone --depth 1 --filter=blob:limit=1k --sparse \
+            --branch "${BRANCH}" \
+            "https://github.com/${OWNER}/${REPO}.git" "${DEST}"
+          mapfile -t SPARSE_PATHS < .sparse-paths
+          (cd "${DEST}" && git sparse-checkout set -- "${SPARSE_PATHS[@]}")
+          (cd "${DEST}" && git lfs pull --include="*.csv")
+          echo "FACTORIO_BENCHMARKS_PATH=${DEST}" >> "$GITHUB_ENV"
+        shell: bash
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        # sync-content + sync-blog-images + tsc -b (covers `npm run lint`) + vite build
+        run: npm run build
+
+      - name: Test Worker
+        run: npm test
+
+      - name: Check Worker config
+        run: npx wrangler deploy --dry-run
+
+      - name: Install headless Chromium
+        # chromium.launch() runs headless, which uses the headless shell.
+        run: npx playwright install --with-deps --only-shell chromium
+
+      - name: Check pages (critical flows)
+        run: npm run check -- --only home,blueprints,benchmark-detail
