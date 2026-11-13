@@ -2,12 +2,32 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "abucnasty-dev",
   "compatibility_date": "2026-11-10",
-  // Static assets only: no Worker script yet. Add "main" (and "run_worker_first"
-  // for the paths it should handle) when the site needs server-side routes.
+  // Handles /api/latest-video and the link-preview tags of a few routes (see worker/index.ts).
+  "main": "worker/index.ts",
   "assets": {
     "directory": "./dist",
+    "binding": "ASSETS",
     // Unknown paths get index.html with a 200, so React Router handles deep links.
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    // Only these paths run the Worker; everything else (and every file under them, such as
+    // /benchmarks/<slug>/images/...) is served straight from the assets.
+    "run_worker_first": [
+      "/api/*",
+      "/blueprints/*",
+      "/benchmarks/*",
+      "/blog/*",
+      "!/benchmarks/*/*",
+      "!/blog/*/*"
+    ]
+  },
+  "vars": {
+    // Base of the canonical and og:url tags the Worker writes. index.html's own tags are separate.
+    "SITE_URL": "https://abucnasty.dev"
+  },
+  "secrets": {
+    // YouTube Data API v3 key for /api/latest-video. The deploy workflow uploads it from the
+    // YOUTUBE_API_KEY repository secret; locally it comes from .dev.vars.
+    "required": ["YOUTUBE_API_KEY"]
   },
   // Served at abucnasty-dev.<account subdomain>.workers.dev until a custom domain is added.
   "workers_dev": true
