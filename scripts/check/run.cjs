@@ -15,6 +15,11 @@ const root = path.resolve(__dirname, '..', '..');
 const pagesDir = path.join(__dirname, 'pages');
 const outDir = path.join(root, 'check-output');
 
+// The site's avatar (src/components/BrandAvatar.tsx, on every page) is served as this 1 × 1
+// PNG instead of from GitHub; see `offline` below.
+const AVATAR_ORIGIN = 'https://avatars.githubusercontent.com/';
+const AVATAR_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+
 const VIEWPORTS = {
   desktop: { width: 1280, height: 800 },
   phone: { width: 390, height: 844 },
@@ -144,6 +149,27 @@ async function main() {
     for (const { mod } of selected) {
       const contexts = [];
       const byPage = new Map(); // Page -> { viewport, errors, requests }
+      const refused = []; // live requests no page could be found for
+
+      // No check may depend on the live internet, so a run gives the same answer wherever and
+      // whenever it runs. Every request that leaves the preview server ends up here: the avatar
+      // gets a stand-in, anything else is refused and fails the module's "no page errors"
+      // assertion. The blueprint vault fixture (catalogFixture.install) and a page module's own
+      // page.route are registered later, so they win over this.
+      const offline = (route) => {
+        const req = route.request();
+        if (req.url().startsWith(AVATAR_ORIGIN)) return route.fulfill({ status: 200, contentType: 'image/png', body: AVATAR_PNG });
+        let state;
+        try {
+          state = byPage.get(req.frame().page());
+        } catch {
+          /* not from a page frame */
+        }
+        const what = `refused live request ${req.url()} (serve it from a fixture in scripts/check/run.cjs)`;
+        if (state) state.errors.push(what);
+        else refused.push(what);
+        return route.abort('blockedbyclient');
+      };
 
       const watch = (page, viewport) => {
         const state = { viewport, errors: [], requests: [] };
@@ -177,6 +203,7 @@ async function main() {
             permissions: ['clipboard-read', 'clipboard-write'],
           });
           contexts.push(context);
+          await context.route((url) => url.origin !== base, offline);
           await catalogFixture.install(context);
           const page = await context.newPage();
           watch(page, viewport);
@@ -223,7 +250,7 @@ async function main() {
         crashed = true;
         record(mod.name, 'page module ran to completion', false, err && err.stack ? err.stack.split('\n').slice(0, 4).join(' | ') : String(err));
       }
-      const errors = [...byPage.values()].flatMap((s) => s.errors);
+      const errors = [...refused, ...[...byPage.values()].flatMap((s) => s.errors)];
       if (byPage.size > 0) record(mod.name, 'no page errors or console errors', errors.length === 0, errors.slice(0, 5).join(' | '));
       for (const context of contexts) await context.close().catch(() => {});
     }
