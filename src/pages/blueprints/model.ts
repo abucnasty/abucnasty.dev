@@ -1,6 +1,8 @@
 // Pure helpers over the catalog for the Blueprints page: the index tree, the
-// filter, book nodes and the image a selection shows.
-import { categoryName, folderName, isListed, type BookNode, type Catalog, type CatalogEntry, type NodeKind } from '../../catalog';
+// filter, book nodes and the image a selection shows. Also used by the Worker
+// (worker/previews.ts), so it imports the React-free catalogCore, with the `.ts`
+// extension that Node's type stripping needs for the Worker's unit tests.
+import { categoryName, folderName, isListed, type BookNode, type Catalog, type CatalogEntry, type NodeKind } from '../../catalogCore.ts';
 
 export interface IndexCategory {
   key: string;
