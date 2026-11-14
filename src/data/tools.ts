@@ -44,7 +44,7 @@ export const toolSections: ToolSection[] = [
         description: 'A web app for designing and generating Factorio clock blueprint strings for stack inserters',
         author: 'abucnasty',
         links: [
-          { kind: 'app', label: 'Open app', url: 'https://clock-generator-self.vercel.app/' },
+          { kind: 'app', label: 'Open app', url: 'https://clock.abucnasty.dev/' },
           { kind: 'github', label: 'GitHub', url: 'https://github.com/abucnasty/factorio-scripts' },
         ],
       },
