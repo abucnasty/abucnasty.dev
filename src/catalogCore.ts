@@ -133,9 +133,11 @@ export function isListed(entry: CatalogEntry): boolean {
   return entry.status !== 'unlisted';
 }
 
-/** Listed entries that are not deprecated. */
+/** Blueprints in listed entries that are not deprecated; a book counts every blueprint inside it. */
 export function activeCount(catalog: Catalog): number {
-  return catalog.blueprints.filter((e) => isListed(e) && !e.deprecated).length;
+  return catalog.blueprints
+    .filter((e) => isListed(e) && !e.deprecated)
+    .reduce((n, e) => n + (e.blueprint.kind === 'blueprint-book' ? e.blueprint.counts.blueprints : 1), 0);
 }
 
 /** "common-quality-science" → "Common Quality Science". */
