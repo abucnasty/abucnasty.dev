@@ -1,10 +1,11 @@
+import { useMemo } from 'react';
 import { Box, ButtonBase, Chip, Stack, Typography } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import { Link as RouterLink } from 'react-router-dom';
 import summary from '../generated/summary.json';
 import type { BenchmarkSummary, ContentSummary } from '../content';
 import { activeCount, useCatalog } from '../catalog';
-import { blogPosts } from '../blog/registry';
+import { listedPosts, postRoute, useBlogIndex, type BlogPostMeta } from '../blog';
 import { formatBytes } from '../format';
 import { layout } from '../layout';
 import { SocialLinks } from '../components/SocialLinks';
@@ -69,30 +70,39 @@ function FeedRow({ item }: { item: FeedItem }) {
   );
 }
 
-const latest: FeedItem[] = [
-  ...content.benchmarks.filter((b) => b.date).map(benchmarkItem),
-  ...blogPosts.map(
-    (p): FeedItem => ({
-      key: `post:${p.slug}`,
-      to: `/blog/${p.slug}`,
-      date: p.date,
-      title: p.title,
-      subtitle: p.description,
-      tag: 'Post',
-    }),
-  ),
-]
-  .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
-  .slice(0, LATEST_COUNT);
+const datedBenchmarks = content.benchmarks.filter((b) => b.date).map(benchmarkItem);
 
-const latestKeys = new Set(latest.map((i) => i.key));
-const featured = content.benchmarks
-  .filter((b) => b.featured)
-  .map(benchmarkItem)
-  .filter((i) => !latestKeys.has(i.key));
+/** Benchmarks and posts, newest first; posts join once the blog index has loaded from the vault. */
+function latestItems(posts: readonly BlogPostMeta[]): FeedItem[] {
+  return [
+    ...datedBenchmarks,
+    ...posts.map(
+      (p): FeedItem => ({
+        key: `post:${p.slug}`,
+        to: postRoute(p.slug),
+        // A post may carry a time; the feed shows the day.
+        date: p.date.slice(0, 10),
+        title: p.title,
+        subtitle: p.description,
+        tag: 'Post',
+      }),
+    ),
+  ]
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+    .slice(0, LATEST_COUNT);
+}
 
-/** The rows of "Also here"; the blueprint count comes from the live catalog once it has loaded. */
-const alsoHere = (activeBlueprints: number | null): Array<{ title: string; subtitle: string; to: string }> => [
+/** Featured benchmarks that are not already in Latest. */
+function featuredItems(latest: FeedItem[]): FeedItem[] {
+  const latestKeys = new Set(latest.map((i) => i.key));
+  return content.benchmarks
+    .filter((b) => b.featured)
+    .map(benchmarkItem)
+    .filter((i) => !latestKeys.has(i.key));
+}
+
+/** The rows of "Also here"; the blueprint and post counts come from the vault once loaded. */
+const alsoHere = (activeBlueprints: number | null, posts: number | null): Array<{ title: string; subtitle: string; to: string }> => [
   {
     title: 'Blueprints',
     subtitle: activeBlueprints === null ? 'Megabase builds, straight from the vault' : `${activeBlueprints} active blueprints`,
@@ -106,7 +116,7 @@ const alsoHere = (activeBlueprints: number | null): Array<{ title: string; subti
   { title: 'Tools and mods', subtitle: 'Benchmarking tools, utilities and mods', to: '/tools' },
   {
     title: 'Blog',
-    subtitle: `${blogPosts.length} ${blogPosts.length === 1 ? 'post' : 'posts'}`,
+    subtitle: posts === null ? 'Write-ups and announcements' : `${posts} ${posts === 1 ? 'post' : 'posts'}`,
     to: '/blog',
   },
   { title: 'About', subtitle: 'Who runs this and how to get in touch', to: '/about' },
@@ -119,6 +129,10 @@ export function Home() {
   const { open: openSearch } = useSearch();
   const catalog = useCatalog();
   const activeBlueprints = catalog.catalog ? activeCount(catalog.catalog) : null;
+  const blog = useBlogIndex();
+  const posts = useMemo(() => (blog.index ? listedPosts(blog.index) : []), [blog.index]);
+  const latest = useMemo(() => latestItems(posts), [posts]);
+  const featured = useMemo(() => featuredItems(latest), [latest]);
   const searchText = fullSearchText(activeBlueprints);
   return (
     <Stack spacing={layout.sectionGap}>
@@ -253,7 +267,7 @@ export function Home() {
           <Box>
             <SectionHeader label="Also here" />
             <RowGroup>
-              {alsoHere(activeBlueprints).map((r) => (
+              {alsoHere(activeBlueprints, blog.index ? posts.length : null).map((r) => (
                 <ListRow key={r.to} to={r.to} title={r.title} subtitle={r.subtitle} />
               ))}
             </RowGroup>

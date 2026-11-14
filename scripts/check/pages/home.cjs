@@ -1,18 +1,8 @@
-const fs = require('fs');
-const path = require('path');
-
-// The registry is TypeScript: read slug and date out of the file rather than import it.
-function registryPosts() {
-  const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'src', 'blog', 'registry.ts'), 'utf8');
-  const slugs = [...src.matchAll(/\bslug:\s*(['"])([^'"]+)\1/g)].map((m) => m[2]);
-  const dates = [...src.matchAll(/\bdate:\s*(['"])(\d{4}-\d{2}-\d{2})\1/g)].map((m) => m[2]);
-  return slugs.map((slug, i) => ({ slug, date: dates[i] }));
-}
-
 module.exports = {
   name: 'home',
   async run({ open, expect, shot, box, aboveFold, data }) {
-    const posts = registryPosts();
+    // Posts come from the vault's blog index (the fixture here); unlisted ones are not in Latest.
+    const posts = data.blog.posts.filter((p) => p.status !== 'unlisted');
     const items = [
       ...data.index.benchmarks.filter((b) => b.date).map((b) => ({ to: `/benchmarks/${b.slug}`, date: b.date })),
       ...posts.map((p) => ({ to: `/blog/${p.slug}`, date: p.date })),
@@ -85,6 +75,8 @@ module.exports = {
           const k = await aboveFold(page, `main a[href="${to}"]`);
           expect(`desktop: link to ${to} above the fold`, k >= 1, `${k} links`);
         }
+        const blogRow = await page.locator('main a[href="/blog"]').first().innerText();
+        expect('desktop: Blog row counts the listed posts from the vault', blogRow.includes(`${posts.length} posts`), blogRow.replace(/\n/g, ' | '));
         const saves = await page.locator('main a[href="/saves"]').first().innerText();
         expect('desktop: Save files row shows the save count', saves.includes(`${data.index.saveStats.count} saves`), saves.replace(/\n/g, ' | '));
         // The blueprint count comes from the live catalog (the fixture here): listed, not deprecated;

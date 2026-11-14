@@ -73,7 +73,7 @@ jobs:
         shell: bash
 
       - name: Build
-        # sync-content + sync-blog-images + tsc -b (covers `npm run lint`) + vite build
+        # sync-content + tsc -b (covers `npm run lint`) + vite build
         run: npm run build
 
       - name: Test Worker

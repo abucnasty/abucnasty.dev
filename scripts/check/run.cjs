@@ -10,6 +10,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { chromium } = require('playwright');
 const catalogFixture = require('./fixtures/catalog.cjs');
+const blogFixture = require('./fixtures/blog.cjs');
 
 const root = path.resolve(__dirname, '..', '..');
 const pagesDir = path.join(__dirname, 'pages');
@@ -35,6 +36,10 @@ const IGNORED_ERRORS = [
   {
     match: 'vault.abucnasty.dev/index.json',
     why: 'the blueprints check makes the catalog fail on purpose to see the "Try again" state',
+  },
+  {
+    match: 'vault.abucnasty.dev/blog/index.json',
+    why: 'the blog check makes the blog index fail on purpose to see the "Try again" state',
   },
 ];
 
@@ -96,8 +101,8 @@ async function startServer() {
 
 function loadData() {
   const read = (name) => JSON.parse(fs.readFileSync(path.join(root, 'src', 'generated', name), 'utf8'));
-  // `catalog` is the fixture every page is served in place of the live blueprint vault.
-  return { index: read('index.json'), catalog: catalogFixture.index, saves: read('saves.json') };
+  // `catalog` and `blog` are the fixtures every page is served in place of the live vault.
+  return { index: read('index.json'), catalog: catalogFixture.index, blog: blogFixture.index, saves: read('saves.json') };
 }
 
 const results = [];

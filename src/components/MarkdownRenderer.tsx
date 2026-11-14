@@ -1,6 +1,6 @@
 import type { SxProps, Theme } from '@mui/material';
 import { Box, Link, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSlug from 'rehype-slug';
@@ -10,12 +10,14 @@ interface MarkdownRendererProps {
   source: string;
   /** Merged after the root styles, so a caller can override font size and margins. */
   sx?: SxProps<Theme>;
+  /** Rewrites every link and image URL (raw HTML included) before the default sanitising. */
+  resolveUrl?: (url: string) => string;
 }
 
 const isExternal = (href: string | undefined) =>
   !!href && /^https?:\/\//i.test(href);
 
-export function MarkdownRenderer({ source, sx }: MarkdownRendererProps) {
+export function MarkdownRenderer({ source, sx, resolveUrl }: MarkdownRendererProps) {
   return (
     <Box
       sx={[
@@ -59,6 +61,7 @@ export function MarkdownRenderer({ source, sx }: MarkdownRendererProps) {
       ]}
     >
       <ReactMarkdown
+        urlTransform={resolveUrl ? (url) => defaultUrlTransform(resolveUrl(url)) : defaultUrlTransform}
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, rehypeSlug, [rehypeAutolinkHeadings, { behavior: 'wrap' }]]}
         components={{
