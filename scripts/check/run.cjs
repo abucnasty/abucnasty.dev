@@ -33,7 +33,7 @@ const IGNORED_ERRORS = [
     why: "Home's latest-video card calls the Worker, which vite preview does not run (404)",
   },
   {
-    match: 'blueprints.abucnasty.dev/index.json',
+    match: 'vault.abucnasty.dev/index.json',
     why: 'the blueprints check makes the catalog fail on purpose to see the "Try again" state',
   },
 ];
