@@ -17,7 +17,8 @@ import { Link as RouterLink, useLocation } from 'react-router-dom';
 import { layout } from '../layout';
 import { loadSaveTree, loadedSaveTree, type SaveTree } from '../saves';
 import { useCatalog, type Catalog } from '../catalog';
-import { SEARCH_GROUPS, blueprintEntries, saveEntries, search, staticEntries, type SearchEntry, type SearchKind } from '../search';
+import { useBlogIndex, type BlogIndex } from '../blog';
+import { SEARCH_GROUPS, blueprintEntries, postEntries, saveEntries, search, staticEntries, type SearchEntry, type SearchKind } from '../search';
 
 const GROUP_LIMIT = 6;
 
@@ -83,6 +84,12 @@ function blueprintsOf(catalog: Catalog | null): SearchEntry[] {
   if (blueprintCache?.catalog !== catalog) blueprintCache = { catalog, entries: blueprintEntries(catalog) };
   return blueprintCache.entries;
 }
+let postCache: { index: BlogIndex; entries: SearchEntry[] } | null = null;
+function postsOf(index: BlogIndex | null): SearchEntry[] {
+  if (!index) return [];
+  if (postCache?.index !== index) postCache = { index, entries: postEntries(index) };
+  return postCache.entries;
+}
 
 interface Row {
   id: string;
@@ -111,6 +118,8 @@ function SearchBody({ onClose }: { onClose: () => void }) {
   const [failed, setFailed] = useState(false);
   // The blueprint catalog is fetched live (once per page load) as soon as the dialog opens.
   const catalogState = useCatalog();
+  // So is the blog index.
+  const blogState = useBlogIndex();
 
   const q = query.trim();
 
@@ -133,7 +142,7 @@ function SearchBody({ onClose }: { onClose: () => void }) {
     const flat: Row[] = [];
     const out: Group[] = [];
     if (!q) return { groups: out, rows: flat };
-    const found = search([...statics(), ...blueprintsOf(catalogState.catalog)], q);
+    const found = search([...statics(), ...blueprintsOf(catalogState.catalog), ...postsOf(blogState.index)], q);
     const saves = tree ? search(saveEntries(tree, q), q) : [];
     const allLabel: Partial<Record<SearchKind, { to: string; noun: string }>> = {
       benchmark: { to: `/benchmarks?q=${encodeURIComponent(q)}`, noun: 'benchmarks' },
@@ -154,7 +163,13 @@ function SearchBody({ onClose }: { onClose: () => void }) {
               : catalogState.status === 'failed'
                 ? 'Blueprints could not be loaded.'
                 : undefined
-            : undefined;
+            : kind === 'post' && list.length === 0
+              ? blogState.status === 'loading'
+                ? 'Searching blog posts…'
+                : blogState.status === 'failed'
+                  ? 'Blog posts could not be loaded.'
+                  : undefined
+              : undefined;
       if (list.length === 0 && !message) continue;
       const rowsOfGroup: Row[] = list.slice(0, GROUP_LIMIT).map((entry, i) => ({
         id: `${uid}-${kind}-${i}`,
@@ -174,7 +189,7 @@ function SearchBody({ onClose }: { onClose: () => void }) {
       out.push({ kind, label, rows: rowsOfGroup, message });
     }
     return { groups: out, rows: flat };
-  }, [q, tree, failed, loadingSaves, uid, catalogState.catalog, catalogState.status]);
+  }, [q, tree, failed, loadingSaves, uid, catalogState.catalog, catalogState.status, blogState.index, blogState.status]);
 
   const activeRow: Row | undefined = rows[active];
 
@@ -187,7 +202,7 @@ function SearchBody({ onClose }: { onClose: () => void }) {
     el.scrollIntoView({ block: 'nearest' });
   }, [activeRow]);
 
-  const nothing = Boolean(q) && rows.length === 0 && !loadingSaves && !failed && catalogState.status === 'ready';
+  const nothing = Boolean(q) && rows.length === 0 && !loadingSaves && !failed && catalogState.status === 'ready' && blogState.status === 'ready';
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.nativeEvent.isComposing) return;

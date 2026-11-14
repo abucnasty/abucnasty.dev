@@ -1,6 +1,8 @@
 // A small stand-in for the live blueprint vault, so no check depends on
-// https://vault.abucnasty.dev or raw.githubusercontent.com. run.cjs serves
+// https://vault.abucnasty.dev or raw.githubusercontent.com. /blog/ is served from blog.cjs. run.cjs serves
 // it to every browser context; a page module can override a URL with page.route.
+
+const blog = require('./blog.cjs');
 
 const VAULT = 'https://vault.abucnasty.dev';
 /** Blueprint strings and images are under /blueprints/; index.json is at the root. */
@@ -133,6 +135,10 @@ async function serveVault(route) {
   const url = new URL(route.request().url());
   const path = decodeURIComponent(url.pathname.slice(1));
   if (path === 'index.json') return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(index) });
+  if (path.startsWith('blog/')) {
+    const res = blog.serve(path.slice('blog/'.length), RENDER_JPEG);
+    return res ? route.fulfill({ status: 200, headers: cors, ...res }) : route.fulfill({ status: 404, headers: cors, body: 'not found' });
+  }
   if (!path.startsWith('blueprints/')) return route.fulfill({ status: 404, headers: cors, body: 'not found' });
   const p = path.slice('blueprints/'.length);
   if (p.endsWith('.jpg')) return route.fulfill({ status: 200, headers: cors, contentType: 'image/jpeg', body: RENDER_JPEG });

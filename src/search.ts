@@ -1,11 +1,11 @@
 // Site search: the entries and the matching, with no React. The save index is
-// NOT imported here (it is its own chunk) and blueprints come from the live
-// catalog; the dialog loads both on demand and hands them to `saveEntries` and
-// `blueprintEntries`.
+// NOT imported here (it is its own chunk); blueprints and blog posts come from
+// the live vault. The dialog loads them on demand and hands them to
+// `saveEntries`, `blueprintEntries` and `postEntries`.
 import summary from './generated/summary.json';
 import type { ContentSummary } from './content';
 import { blueprintRoute, categoryName, folderName, isListed, type Catalog } from './catalog';
-import { blogPosts } from './blog/registry';
+import { listedPosts, postRoute, type BlogIndex } from './blogCore';
 import { toolSections, tutorials } from './data/tools';
 import { benchmarkMatchText } from './benchmarkFilters';
 import { saveFolderRoute, searchSaves, type SaveTree } from './saves';
@@ -42,7 +42,7 @@ const hay = (...parts: Array<string | undefined>) =>
     .join('\n')
     .toLowerCase();
 
-/** Everything except save files and blueprints, built once from data already in the main bundle. */
+/** Everything except save files, blueprints and blog posts, built once from data already in the main bundle. */
 export function staticEntries(): SearchEntry[] {
   const topicLabels = new Map(content.topics.map((t) => [t.id, t.label]));
   const entries: SearchEntry[] = [];
@@ -76,17 +76,18 @@ export function staticEntries(): SearchEntry[] {
   for (const t of tutorials) {
     entries.push({ kind: 'tool', title: t.label, to: '/tools', haystack: hay(t.label) });
   }
-
-  for (const p of blogPosts) {
-    entries.push({
-      kind: 'post',
-      title: p.title,
-      detail: p.description,
-      to: `/blog/${p.slug}`,
-      haystack: hay(p.title, p.description, ...(p.tags ?? [])),
-    });
-  }
   return entries;
+}
+
+/** Listed blog posts (newest first), from the live blog index. */
+export function postEntries(index: BlogIndex): SearchEntry[] {
+  return listedPosts(index).map((p) => ({
+    kind: 'post' as const,
+    title: p.title,
+    detail: p.description,
+    to: postRoute(p.slug),
+    haystack: hay(p.title, p.description, ...p.tags),
+  }));
 }
 
 /** Listed blueprints that are not deprecated, from the live catalog. */

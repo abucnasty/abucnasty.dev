@@ -18,7 +18,7 @@ function benchmarkHaystack(b, topicLabels) {
 module.exports = {
   name: 'search',
   async run({ open, goto, expect, requests, data, shot }) {
-    const { index, catalog, saves } = data;
+    const { index, catalog, blog, saves } = data;
     const topicLabels = new Map(index.topics.map((t) => [t.id, t.label]));
     const newest = index.benchmarks.reduce((a, b) => ((b.date ?? '') > (a.date ?? '') ? b : a));
     const savesChunk = (page) => requests(page).filter((u) => u.includes('/assets/saves-'));
@@ -201,6 +201,24 @@ module.exports = {
         await page.waitForTimeout(150);
         const n = await page.locator(`[role=dialog] [role=option][href="/blueprints/${e.path}"]`).count();
         expect(`desktop: search leaves out ${e.status === 'unlisted' ? 'an unlisted' : 'a deprecated'} blueprint`, n === 0);
+      }
+      await page.keyboard.press('Escape');
+      await closed(page);
+    }
+
+    // Blog posts come from the vault's blog index (the fixture here); unlisted ones are left out.
+    {
+      const pick = blog.posts.find((p) => p.status !== 'unlisted');
+      await goto(page, '/');
+      await page.keyboard.press('/');
+      await type(page, pick.title);
+      const post = group(page, 'Blog posts').locator(`[role=option][href="/blog/${pick.slug}"]`);
+      await post.first().waitFor({ timeout: 5000 }).catch(() => {});
+      expect('desktop: a blog post is found by its title', (await post.count()) === 1);
+      for (const p of blog.posts.filter((x) => x.status === 'unlisted')) {
+        await input(page).fill(p.title);
+        await page.waitForTimeout(150);
+        expect('desktop: search leaves out an unlisted blog post', (await page.locator(`[role=dialog] [role=option][href="/blog/${p.slug}"]`).count()) === 0);
       }
       await page.keyboard.press('Escape');
       await closed(page);

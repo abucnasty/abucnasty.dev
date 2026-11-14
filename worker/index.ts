@@ -3,9 +3,10 @@
 //
 // - GET /api/latest-video: see latestVideo.ts.
 // - A blueprint, benchmark or blog page: index.html with that page's title, description,
-//   canonical, Open Graph and Twitter tags, so link previews and crawlers see the page.
+//   canonical, Open Graph and Twitter tags, so link previews and crawlers see the page. Blueprints
+//   and blog posts come from the live vault (cached for 60 s), benchmarks from the build.
 //   Unknown pages, and anything that is not index.html, pass through untouched.
-import { blogPosts } from '../src/blog/registry.ts';
+import { BLOG_INDEX_URL, normaliseBlogIndex, type BlogIndex } from '../src/blogCore.ts';
 import { CATALOG_URL, normaliseCatalog, type Catalog } from '../src/catalogCore.ts';
 import type { ContentIndex } from '../src/content.ts';
 import contentIndex from '../src/generated/index.json';
@@ -39,8 +40,10 @@ async function previewFor(route: PreviewRoute): Promise<Preview | null> {
   switch (route.kind) {
     case 'benchmark':
       return benchmarkPreview(benchmarks, route.slug);
-    case 'blog':
-      return blogPreview(blogPosts, route.slug);
+    case 'blog': {
+      const blog = await loadBlog();
+      return blog ? blogPreview(blog.posts, route.slug) : null;
+    }
     case 'blueprint': {
       const catalog = await loadCatalog();
       return catalog ? blueprintPreview(catalog, route.path, route.entry) : null;
@@ -48,23 +51,30 @@ async function previewFor(route: PreviewRoute): Promise<Preview | null> {
   }
 }
 
-// The catalog is served with max-age=60; keep it that long here and in Cloudflare's cache.
-const CATALOG_TTL_SECONDS = 60;
-let catalogMemo: { catalog: Catalog; at: number } | null = null;
+// The catalog and the blog index are served with max-age=60; keep them that long here and in
+// Cloudflare's cache.
+const VAULT_TTL_SECONDS = 60;
 
-async function loadCatalog(): Promise<Catalog | null> {
-  if (catalogMemo && Date.now() - catalogMemo.at < CATALOG_TTL_SECONDS * 1000) return catalogMemo.catalog;
-  try {
-    const res = await fetch(CATALOG_URL, { cf: { cacheTtl: CATALOG_TTL_SECONDS, cacheEverything: true } });
-    if (!res.ok) throw new Error(`index.json: HTTP ${res.status}`);
-    catalogMemo = { catalog: normaliseCatalog(await res.json()), at: Date.now() };
-    return catalogMemo.catalog;
-  } catch (err) {
-    // The page still works without preview tags; an older catalog beats none.
-    console.error('catalog:', err);
-    return catalogMemo?.catalog ?? null;
-  }
+/** A vault JSON file, fetched at most once a minute per isolate; on failure the last good copy, else null. */
+function vaultJson<T>(url: string, name: string, parse: (json: unknown) => T): () => Promise<T | null> {
+  let memo: { value: T; at: number } | null = null;
+  return async () => {
+    if (memo && Date.now() - memo.at < VAULT_TTL_SECONDS * 1000) return memo.value;
+    try {
+      const res = await fetch(url, { cf: { cacheTtl: VAULT_TTL_SECONDS, cacheEverything: true } });
+      if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
+      memo = { value: parse(await res.json()), at: Date.now() };
+      return memo.value;
+    } catch (err) {
+      // The page still works without preview tags; an older copy beats none.
+      console.error(`${name}:`, err);
+      return memo?.value ?? null;
+    }
+  };
 }
+
+const loadCatalog = vaultJson<Catalog>(CATALOG_URL, 'index.json', normaliseCatalog);
+const loadBlog = vaultJson<BlogIndex>(BLOG_INDEX_URL, 'blog/index.json', normaliseBlogIndex);
 
 /**
  * An attribute value for setAttribute. It escapes `"` (so a value cannot leave the attribute) but
