@@ -1,8 +1,8 @@
 // The Blueprints page, against the catalog fixture (scripts/check/fixtures/catalog.cjs) that
 // run.cjs serves in place of the live vault.
-const { VAULT, stringFor } = require('../fixtures/catalog.cjs');
+const { VAULT, BLUEPRINTS, stringFor } = require('../fixtures/catalog.cjs');
 
-const REPO = 'https://github.com/abucnasty/factorio-blueprints';
+const REPO = 'https://github.com/abucnasty/factorio-vault';
 
 module.exports = {
   name: 'blueprints',
@@ -82,7 +82,7 @@ module.exports = {
       await page.locator('[data-index-row]', { hasText: wide.title }).click();
       await page.waitForURL(`**/blueprints/${wide.path}`);
       expect('desktop: a row selects its build', (await title(page)) === wide.title);
-      expect('desktop: the live link is the build\'s string', (await liveLink(page)) === `${VAULT}/${wide.path}.txt`, await liveLink(page));
+      expect('desktop: the live link is the build\'s string', (await liveLink(page)) === `${BLUEPRINTS}/${wide.path}.txt`, await liveLink(page));
       expect('desktop: the picked row is marked', ((await page.locator('[data-index-row][aria-current="page"]').textContent()) ?? '').includes(wide.title));
       const meta = (await page.locator('[data-meta]').textContent()) ?? '';
       expect('desktop: the meta line is the version and the authors', meta === `${wide.version}by ${wide.authors.join(', ')}`, meta);
@@ -107,7 +107,7 @@ module.exports = {
       await page.locator('[data-viewer]').waitFor({ state: 'detached' });
       expect('desktop: Escape closes the viewer and focus returns to the plate', (await page.evaluate(() => document.activeElement?.getAttribute('data-plate'))) === 'image');
 
-      const images = requests(page).filter((u) => u.startsWith(VAULT) && u.endsWith('.jpg'));
+      const images = requests(page).filter((u) => u.startsWith(`${BLUEPRINTS}/`) && u.endsWith('.jpg'));
       expect('desktop: only the one render on screen was downloaded', new Set(images).size === 1, images.join(' '));
     }
 
@@ -127,7 +127,7 @@ module.exports = {
       );
       await page.locator('[data-contents] a', { hasText: 'Inner One' }).click();
       await page.waitForURL(/entry=0\/0$/);
-      expect('book: an entry retargets the live link', (await liveLink(page)) === `${VAULT}/${book.path}/0/0.txt`, await liveLink(page));
+      expect('book: an entry retargets the live link', (await liveLink(page)) === `${BLUEPRINTS}/${book.path}/0/0.txt`, await liveLink(page));
       expect('book: the entry\'s label is the title', (await title(page)) === 'Inner One');
       const crumbs = ((await page.locator('[data-crumbs]').textContent()) ?? '').trim();
       expect('book: the book and outer book sit above the title', crumbs === `${book.title} / Outer Book`, crumbs);

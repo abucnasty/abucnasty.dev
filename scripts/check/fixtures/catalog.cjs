@@ -1,9 +1,11 @@
 // A small stand-in for the live blueprint vault, so no check depends on
-// https://blueprints.abucnasty.dev or raw.githubusercontent.com. run.cjs serves
+// https://vault.abucnasty.dev or raw.githubusercontent.com. run.cjs serves
 // it to every browser context; a page module can override a URL with page.route.
 
-const VAULT = 'https://blueprints.abucnasty.dev';
-const RAW = 'https://raw.githubusercontent.com/abucnasty/factorio-blueprints/main';
+const VAULT = 'https://vault.abucnasty.dev';
+/** Blueprint strings and images are under /blueprints/; index.json is at the root. */
+const BLUEPRINTS = `${VAULT}/blueprints`;
+const RAW = 'https://raw.githubusercontent.com/abucnasty/factorio-vault/main/blueprints';
 
 // A 64 × 32 JPEG: a dark plate with an amber frame.
 const RENDER_JPEG = Buffer.from(
@@ -116,10 +118,10 @@ const readme = (folder) =>
     `title: ${folder}`,
     '---',
     '',
-    `![cover](${VAULT}/${folder}/cover.jpg)`,
+    `![cover](${BLUEPRINTS}/${folder}/cover.jpg)`,
     '',
-    `- [Whole](${VAULT}/${folder}.txt)`,
-    `  - [Part](${VAULT}/${folder}/0.txt)`,
+    `- [Whole](${BLUEPRINTS}/${folder}.txt)`,
+    `  - [Part](${BLUEPRINTS}/${folder}/0.txt)`,
     '',
     `Fixture note for ${folder}.`,
     '',
@@ -129,8 +131,10 @@ const cors = { 'access-control-allow-origin': '*' };
 
 async function serveVault(route) {
   const url = new URL(route.request().url());
-  const p = decodeURIComponent(url.pathname.slice(1));
-  if (p === 'index.json') return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(index) });
+  const path = decodeURIComponent(url.pathname.slice(1));
+  if (path === 'index.json') return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(index) });
+  if (!path.startsWith('blueprints/')) return route.fulfill({ status: 404, headers: cors, body: 'not found' });
+  const p = path.slice('blueprints/'.length);
   if (p.endsWith('.jpg')) return route.fulfill({ status: 200, headers: cors, contentType: 'image/jpeg', body: RENDER_JPEG });
   if (p.endsWith('.txt')) return route.fulfill({ status: 200, headers: cors, contentType: 'text/plain', body: stringFor(p.slice(0, -4)) });
   return route.fulfill({ status: 404, headers: cors, body: 'not found' });
@@ -151,4 +155,4 @@ async function install(context) {
   await context.route('https://raw.githubusercontent.com/**', serveRaw);
 }
 
-module.exports = { VAULT, index, stringFor, install };
+module.exports = { VAULT, BLUEPRINTS, index, stringFor, install };

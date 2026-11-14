@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { normaliseCatalog } from '../src/catalogCore.ts';
+import { CATALOG_URL, imageUrl, normaliseCatalog, stringUrl, versionUrl } from '../src/catalogCore.ts';
 import { absoluteUrl, benchmarkPreview, blogPreview, blueprintPreview, clip, matchRoute } from './previews.ts';
 
 const catalog = normaliseCatalog({
@@ -70,7 +70,7 @@ test('blueprintPreview: whole entry uses title, authors, category and cover', ()
     title: 'Production Science Book',
     description: 'Factorio blueprint book by abucnasty, friend. Megabasing / Common Quality Science.',
     path: '/blueprints/megabasing/common-quality-science/production-science-book',
-    image: 'https://blueprints.abucnasty.dev/megabasing/common-quality-science/production-science-book/renders/0.jpg',
+    image: 'https://vault.abucnasty.dev/blueprints/megabasing/common-quality-science/production-science-book/renders/0.jpg',
   });
 });
 
@@ -78,7 +78,7 @@ test('blueprintPreview: a slot gets its label and its own render', () => {
   const p = blueprintPreview(catalog, 'megabasing/common-quality-science/production-science-book', '2/0');
   assert.equal(p?.title, 'Iron <plates> & "steel", in Production Science Book');
   assert.equal(p?.path, '/blueprints/megabasing/common-quality-science/production-science-book?entry=2/0');
-  assert.equal(p?.image, 'https://blueprints.abucnasty.dev/megabasing/common-quality-science/production-science-book/renders/2/0.jpg');
+  assert.equal(p?.image, 'https://vault.abucnasty.dev/blueprints/megabasing/common-quality-science/production-science-book/renders/2/0.jpg');
   assert.match(p?.description ?? '', /^Factorio blueprint by abucnasty, friend, in Production Science Book\./);
 });
 
@@ -107,7 +107,7 @@ test('blueprintPreview: paths are percent-encoded in URLs', () => {
   });
   const p = blueprintPreview(odd, 'a/100% belts', null);
   assert.equal(p?.path, '/blueprints/a/100%25%20belts');
-  assert.equal(p?.image, 'https://blueprints.abucnasty.dev/a/100%25%20belts/renders/0.jpg');
+  assert.equal(p?.image, 'https://vault.abucnasty.dev/blueprints/a/100%25%20belts/renders/0.jpg');
 });
 
 test('benchmark and blog previews', () => {
@@ -133,4 +133,12 @@ test('clip and absoluteUrl', () => {
   assert.ok(long.length <= 40 && long.endsWith('word…'), long);
   assert.equal(absoluteUrl('https://abucnasty.dev/', '/blog/p'), 'https://abucnasty.dev/blog/p');
   assert.equal(absoluteUrl('https://abucnasty.dev', '/x?entry=1'), 'https://abucnasty.dev/x?entry=1');
+});
+
+test('vault links: the index at the root, strings and images under /blueprints/, versions by label only', () => {
+  assert.equal(CATALOG_URL, 'https://vault.abucnasty.dev/index.json');
+  assert.equal(stringUrl('grids/substation/trains-substation-grid'), 'https://vault.abucnasty.dev/blueprints/grids/substation/trains-substation-grid.txt');
+  assert.equal(stringUrl('a/b', '3/1'), 'https://vault.abucnasty.dev/blueprints/a/b/3/1.txt');
+  assert.equal(imageUrl('a/b', '0.jpg'), 'https://vault.abucnasty.dev/blueprints/a/b/renders/0.jpg');
+  assert.equal(versionUrl('a/b', { label: 'MK 2', subject: 'MK 2' }), 'https://vault.abucnasty.dev/blueprints/a/b@MK%202.txt');
 });

@@ -1,9 +1,12 @@
 // The blueprint catalog's types and pure helpers (URLs for strings, images,
 // versions and notes). No React and no fetching, so the Worker imports this too
 // (worker/previews.ts); the browser-side loading lives in catalog.ts.
-export const VAULT_ORIGIN = 'https://blueprints.abucnasty.dev';
-export const VAULT_REPO_URL = 'https://github.com/abucnasty/factorio-blueprints';
-const NOTES_BASE = 'https://raw.githubusercontent.com/abucnasty/factorio-blueprints/main';
+// The vault host mirrors the vault: index.json at the root, blueprints under /blueprints/.
+// Catalog paths are relative to the vault's blueprints/ folder, and so are site routes.
+export const VAULT_ORIGIN = 'https://vault.abucnasty.dev';
+const BLUEPRINTS_BASE = `${VAULT_ORIGIN}/blueprints`;
+export const VAULT_REPO_URL = 'https://github.com/abucnasty/factorio-vault';
+const NOTES_BASE = 'https://raw.githubusercontent.com/abucnasty/factorio-vault/main/blueprints';
 
 export type NodeKind = 'blueprint' | 'blueprint-book' | 'upgrade-planner' | 'deconstruction-planner';
 
@@ -43,7 +46,7 @@ export interface CatalogHistoryItem {
 }
 
 export interface CatalogEntry {
-  /** Vault path, e.g. `megabasing/space-science/walt-q5`. */
+  /** Path inside the vault's blueprints/ folder, e.g. `megabasing/space-science/walt-q5`. */
   path: string;
   title: string;
   authors: string[];
@@ -104,23 +107,17 @@ export function blueprintRoute(path: string): string {
 
 /** The string of an entry, or of one entry of a book (`nodePath`, a slot path such as `3/1`). */
 export function stringUrl(path: string, nodePath?: string): string {
-  return `${VAULT_ORIGIN}/${path}${nodePath ? `/${nodePath}` : ''}.txt`;
+  return `${BLUEPRINTS_BASE}/${path}${nodePath ? `/${nodePath}` : ''}.txt`;
 }
 
-/**
- * Where to fetch an older version's string, in order: by label (schema 3), then
- * by commit; the caller moves to the next only on a 404.
- */
-export function versionUrls(path: string, version: Pick<CatalogHistoryItem, 'sha' | 'label'>): string[] {
-  const bySha = `${VAULT_ORIGIN}/${path}@${version.sha}.txt`;
-  if (!version.label) return [bySha];
-  // The @<sha> fallback can go once the label-aware link Worker is deployed and the index is schema 3.
-  return [`${VAULT_ORIGIN}/${path}@${encodeURIComponent(version.label)}.txt`, bySha];
+/** The string of a recorded version, by its label (in a schema 3 index the subject is the label too). */
+export function versionUrl(path: string, version: Pick<CatalogHistoryItem, 'label' | 'subject'>): string {
+  return `${BLUEPRINTS_BASE}/${path}@${encodeURIComponent(version.label ?? version.subject)}.txt`;
 }
 
 /** A render: `file` is a `renders[].file`, or a book node's `render`. */
 export function imageUrl(path: string, file: string): string {
-  return `${VAULT_ORIGIN}/${path}/renders/${file}`;
+  return `${BLUEPRINTS_BASE}/${path}/renders/${file}`;
 }
 
 /** The README of a vault folder (an entry's `path`, or a node's `folder`). */

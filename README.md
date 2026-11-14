@@ -51,7 +51,7 @@ Sync runs through `&&` in the `dev` and `build` scripts, not lifecycle hooks, so
   ```
 
   `summary` and `tags` are accepted too; any other field, a duplicate slug or an unknown topic fails the sync (`scripts/lib/benchmark-frontmatter.mjs`). Benchmarks are listed in folder-name order with featured ones first; every list on the site sorts by date and keeps that order for ties and undated ones. So publishing a benchmark means editing only factorio-benchmarks. `content/manifest.json` keeps the site-wide settings: the source repo and branch, `lfsWorkerUrl` and the topics. The `/saves` index covers every `.zip` committed at `HEAD` of the source repo, read from git-lfs pointers; downloads go through `lfsWorkerUrl` in the manifest. Sync fails rather than publish a broken page.
-- **Blueprints** are fetched in the browser on each visit from the live catalog at `https://blueprints.abucnasty.dev/index.json`, published from [abucnasty/factorio-blueprints](https://github.com/abucnasty/factorio-blueprints). See `src/catalog.ts` (types and pure helpers in `src/catalogCore.ts`, which the Worker shares).
+- **Blueprints** are fetched in the browser on each visit from the live catalog at `https://vault.abucnasty.dev/index.json` (strings and images under `https://vault.abucnasty.dev/blueprints/`, notes from the repo's `blueprints/` folder), published from [abucnasty/factorio-vault](https://github.com/abucnasty/factorio-vault). See `src/catalog.ts` (types and pure helpers in `src/catalogCore.ts`, which the Worker shares).
 - **Blog posts** live in `src/blog/posts/` (Markdown or TSX) and are registered in `src/blog/registry.ts`. `scripts/sync-blog-images.mjs` copies their images to `public/blog/`.
 - **Tools** are listed in `src/data/tools.ts`.
 

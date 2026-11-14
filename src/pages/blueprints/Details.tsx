@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { Box, ButtonBase } from '@mui/material';
 import YouTubeIcon from '@mui/icons-material/YouTube';
 import { Link as RouterLink } from 'react-router-dom';
-import { blueprintRoute, versionUrls, type CatalogEntry, type CatalogHistoryItem } from '../../catalog';
+import { blueprintRoute, versionUrl, type CatalogEntry, type CatalogHistoryItem } from '../../catalog';
 import { MarkdownRenderer } from '../../components/MarkdownRenderer';
 import { layout } from '../../layout';
 import { copyFromUrl, useCopy } from './copy';
@@ -239,7 +239,7 @@ function VersionRow({ path, version, current }: { path: string; version: Catalog
       ) : (
         <ButtonBase
           aria-label={state === 'copied' ? `Copied the ${day} version` : `Copy the string of the ${day} version`}
-          onClick={() => run(() => copyFromUrl(versionUrls(path, version)))}
+          onClick={() => run(() => copyFromUrl(versionUrl(path, version)))}
           sx={{
             flex: '0 0 72px',
             height: 44,

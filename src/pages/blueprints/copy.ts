@@ -3,20 +3,14 @@
 // treats the write as part of the click.
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-/** Fetches the first of `urls` that is not a 404. */
-async function fetchText(urls: string | string[]): Promise<string> {
-  const list = typeof urls === 'string' ? [urls] : urls;
-  for (const [i, url] of list.entries()) {
-    const res = await fetch(url);
-    if (res.status === 404 && i < list.length - 1) continue;
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return res.text();
-  }
-  throw new Error('No URL to fetch.');
+async function fetchText(url: string): Promise<string> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
 }
 
-export async function copyFromUrl(urls: string | string[]): Promise<void> {
-  const text = fetchText(urls);
+export async function copyFromUrl(url: string): Promise<void> {
+  const text = fetchText(url);
   text.catch(() => {}); // handled below; avoid an unhandled rejection while the clipboard waits
   if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
     try {
