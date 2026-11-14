@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { normaliseBlogIndex } from '../src/blogCore.ts';
 import { CATALOG_URL, imageUrl, normaliseCatalog, stringUrl, versionUrl } from '../src/catalogCore.ts';
 import { absoluteUrl, benchmarkPreview, blogPreview, blueprintPreview, clip, matchRoute } from './previews.ts';
 
@@ -121,9 +122,16 @@ test('benchmark and blog previews', () => {
   assert.equal(benchmarkPreview(benchmarks, 'bare')?.description, 'A Factorio UPS benchmark: Bare.');
   assert.equal(benchmarkPreview(benchmarks, 'missing'), null);
 
-  const posts = [{ slug: 'p', title: 'Post', description: 'About it' }, { slug: 'n', title: 'No description' }];
+  // Posts come from the vault's blog index, as the Worker reads it.
+  const { posts } = normaliseBlogIndex({
+    schema: 1,
+    posts: [
+      { slug: 'p', title: 'Post', date: '2026-05-13', description: 'About it', tags: [], status: 'public', files: [] },
+      { slug: 'n', title: 'No description', date: '2026-05-12', status: 'unlisted' },
+    ],
+  });
   assert.deepEqual(blogPreview(posts, 'p'), { title: 'Post', description: 'About it', path: '/blog/p' });
-  assert.equal(blogPreview(posts, 'n')?.description, 'No description');
+  assert.equal(blogPreview(posts, 'n')?.description, 'No description', 'unlisted posts get previews');
   assert.equal(blogPreview(posts, 'x'), null);
 });
 

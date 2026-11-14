@@ -26,7 +26,7 @@ export interface BenchmarkInfo {
   finding?: string;
 }
 
-/** The fields of a blog post (src/blog/registry.ts) a preview uses. */
+/** The fields of a blog post (the vault's blog/index.json, see src/blogCore.ts) a preview uses. */
 export interface PostInfo {
   slug: string;
   title: string;
@@ -118,6 +118,7 @@ export function benchmarkPreview(benchmarks: readonly BenchmarkInfo[], slug: str
   return { title: b.title, description: clip(description), path: `/benchmarks/${encodeURIComponent(b.slug)}` };
 }
 
+/** A post by its slug; unlisted posts get previews too (they open by their address). */
 export function blogPreview(posts: readonly PostInfo[], slug: string): Preview | null {
   const p = posts.find((x) => x.slug === slug);
   if (!p) return null;
