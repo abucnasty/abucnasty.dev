@@ -30,10 +30,16 @@ export interface BookNode {
 }
 
 export interface CatalogHistoryItem {
+  /** The version's commit. */
   sha: string;
   /** ISO date-time. */
   date: string;
+  /** The commit's subject line; from schema 3, the label again. */
   subject: string;
+  /** Schema 3: the version's name, e.g. `1.0` or `MK3` (never contains `/`). */
+  label?: string;
+  /** Schema 3: content hash of the version's blueprint. */
+  hash?: string;
 }
 
 export interface CatalogEntry {
@@ -101,9 +107,15 @@ export function stringUrl(path: string, nodePath?: string): string {
   return `${VAULT_ORIGIN}/${path}${nodePath ? `/${nodePath}` : ''}.txt`;
 }
 
-/** The string as it was at commit `sha`. */
-export function versionUrl(path: string, sha: string): string {
-  return `${VAULT_ORIGIN}/${path}@${sha}.txt`;
+/**
+ * Where to fetch an older version's string, in order: by label (schema 3), then
+ * by commit; the caller moves to the next only on a 404.
+ */
+export function versionUrls(path: string, version: Pick<CatalogHistoryItem, 'sha' | 'label'>): string[] {
+  const bySha = `${VAULT_ORIGIN}/${path}@${version.sha}.txt`;
+  if (!version.label) return [bySha];
+  // The @<sha> fallback can go once the label-aware link Worker is deployed and the index is schema 3.
+  return [`${VAULT_ORIGIN}/${path}@${encodeURIComponent(version.label)}.txt`, bySha];
 }
 
 /** A render: `file` is a `renders[].file`, or a book node's `render`. */

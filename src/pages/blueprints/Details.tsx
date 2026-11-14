@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { Box, ButtonBase } from '@mui/material';
 import YouTubeIcon from '@mui/icons-material/YouTube';
 import { Link as RouterLink } from 'react-router-dom';
-import { blueprintRoute, versionUrl, type CatalogEntry } from '../../catalog';
+import { blueprintRoute, versionUrls, type CatalogEntry, type CatalogHistoryItem } from '../../catalog';
 import { MarkdownRenderer } from '../../components/MarkdownRenderer';
 import { layout } from '../../layout';
 import { copyFromUrl, useCopy } from './copy';
@@ -221,16 +221,16 @@ export function NotesBody({ text }: { text: string }) {
   );
 }
 
-function VersionRow({ path, sha, date, subject, current }: { path: string; sha: string; date: string; subject: string; current: boolean }) {
-  const [state, run] = useCopy(sha);
-  const day = datePart(date);
+function VersionRow({ path, version, current }: { path: string; version: CatalogHistoryItem; current: boolean }) {
+  const [state, run] = useCopy(version.sha);
+  const day = datePart(version.date);
   return (
     <Box sx={{ minHeight: 44, display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 2, borderBottom: `1px solid ${colors.rule}` }}>
       <Box component="span" sx={{ flex: '0 0 96px', fontFamily: titleFont, fontSize: 15, color: colors.secondary }}>
         {day}
       </Box>
       <Box component="span" sx={{ flex: '1 1 200px', minWidth: 0, overflowWrap: 'anywhere', py: '10px' }}>
-        {subject}
+        {version.label ?? version.subject}
       </Box>
       {current ? (
         <Box component="span" sx={{ flex: '0 0 72px', textAlign: 'right', fontSize: 14, color: colors.green }}>
@@ -239,7 +239,7 @@ function VersionRow({ path, sha, date, subject, current }: { path: string; sha: 
       ) : (
         <ButtonBase
           aria-label={state === 'copied' ? `Copied the ${day} version` : `Copy the string of the ${day} version`}
-          onClick={() => run(() => copyFromUrl(versionUrl(path, sha)))}
+          onClick={() => run(() => copyFromUrl(versionUrls(path, version)))}
           sx={{
             flex: '0 0 72px',
             height: 44,
@@ -268,7 +268,7 @@ export function Versions({ entry }: { entry: CatalogEntry }) {
       <SectionTitle>Versions</SectionTitle>
       <Box sx={{ display: 'flex', flexDirection: 'column' }}>
         {entry.history.map((h, i) => (
-          <VersionRow key={h.sha} path={entry.path} sha={h.sha} date={h.date} subject={h.subject} current={i === 0} />
+          <VersionRow key={h.label ?? h.sha} path={entry.path} version={h} current={i === 0} />
         ))}
       </Box>
     </Box>
