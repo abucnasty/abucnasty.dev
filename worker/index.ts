@@ -1,17 +1,31 @@
 // The site's Worker. wrangler.jsonc's `run_worker_first` sends only /api/*, /blueprints/*,
-// /benchmarks/<slug> and /blog/<slug> here; every other request is served from dist/ directly.
+// /benchmarks/<slug>, /blog/<slug> and /wiki, /wiki/<slug> here; every other request is served
+// from dist/ directly.
 //
 // - GET /api/latest-video: see latestVideo.ts.
 // - A blueprint, benchmark or blog page: index.html with that page's title, description,
 //   canonical, Open Graph and Twitter tags, so link previews and crawlers see the page. Blueprints
 //   and blog posts come from the live vault (cached for 60 s), benchmarks from the build.
 //   Unknown pages, and anything that is not index.html, pass through untouched.
+// - A wiki address that is a former title of a page (or /wiki/home): a 301 to the page, read from
+//   the live wiki index like the previews.
 import { BLOG_INDEX_URL, normaliseBlogIndex, type BlogIndex } from '../src/blogCore.ts';
+import { WIKI_INDEX_URL, normaliseWikiIndex, type WikiIndex } from '../src/wikiCore.ts';
 import { CATALOG_URL, normaliseCatalog, type Catalog } from '../src/catalogCore.ts';
 import type { ContentIndex } from '../src/content.ts';
 import contentIndex from '../src/generated/index.json';
 import { latestVideo } from './latestVideo.ts';
-import { absoluteUrl, benchmarkPreview, blogPreview, blueprintPreview, matchRoute, type Preview, type PreviewRoute } from './previews.ts';
+import {
+  absoluteUrl,
+  benchmarkPreview,
+  blogPreview,
+  blueprintPreview,
+  matchRoute,
+  wikiPreview,
+  wikiRedirect,
+  type Preview,
+  type PreviewRoute,
+} from './previews.ts';
 
 // Known at build time, so bundled into the Worker by wrangler: no extra file or request.
 const benchmarks = (contentIndex as ContentIndex).benchmarks;
@@ -25,6 +39,12 @@ export default {
     }
 
     const route = request.method === 'GET' || request.method === 'HEAD' ? matchRoute(url) : null;
+    if (route?.kind === 'wiki' && route.slug !== '') {
+      const wiki = await loadWiki();
+      const to = wiki ? wikiRedirect(wiki.pages, route.slug) : null;
+      // An alias can be dropped and its address used by a new page later: cache the redirect briefly.
+      if (to) return new Response(null, { status: 301, headers: { Location: `${to}${url.search}`, 'Cache-Control': 'public, max-age=300' } });
+    }
     const preview = route ? await previewFor(route) : null;
     if (!preview) return env.ASSETS.fetch(request);
 
@@ -44,6 +64,10 @@ async function previewFor(route: PreviewRoute): Promise<Preview | null> {
       const blog = await loadBlog();
       return blog ? blogPreview(blog.posts, route.slug) : null;
     }
+    case 'wiki': {
+      const wiki = await loadWiki();
+      return wiki ? wikiPreview(wiki.pages, route.slug) : null;
+    }
     case 'blueprint': {
       const catalog = await loadCatalog();
       return catalog ? blueprintPreview(catalog, route.path, route.entry) : null;
@@ -51,7 +75,7 @@ async function previewFor(route: PreviewRoute): Promise<Preview | null> {
   }
 }
 
-// The catalog and the blog index are served with max-age=60; keep them that long here and in
+// The catalog and the blog and wiki indexes are served with max-age=60; keep them that long here and in
 // Cloudflare's cache.
 const VAULT_TTL_SECONDS = 60;
 
@@ -75,6 +99,7 @@ function vaultJson<T>(url: string, name: string, parse: (json: unknown) => T): (
 
 const loadCatalog = vaultJson<Catalog>(CATALOG_URL, 'index.json', normaliseCatalog);
 const loadBlog = vaultJson<BlogIndex>(BLOG_INDEX_URL, 'blog/index.json', normaliseBlogIndex);
+const loadWiki = vaultJson<WikiIndex>(WIKI_INDEX_URL, 'wiki/index.json', normaliseWikiIndex);
 
 /**
  * An attribute value for setAttribute. It escapes `"` (so a value cannot leave the attribute) but

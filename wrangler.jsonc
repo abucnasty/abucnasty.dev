@@ -16,6 +16,8 @@
       "/blueprints/*",
       "/benchmarks/*",
       "/blog/*",
+      "/wiki",
+      "/wiki/*",
       "!/benchmarks/*/*",
       "!/blog/*/*"
     ]

@@ -1,16 +1,17 @@
 // Site search: the entries and the matching, with no React. The save index is
-// NOT imported here (it is its own chunk); blueprints and blog posts come from
-// the live vault. The dialog loads them on demand and hands them to
-// `saveEntries`, `blueprintEntries` and `postEntries`.
+// NOT imported here (it is its own chunk); blueprints, blog posts and wiki pages
+// come from the live vault. The dialog loads them on demand and hands them to
+// `saveEntries`, `blueprintEntries`, `postEntries` and `wikiEntries`.
 import summary from './generated/summary.json';
 import type { ContentSummary } from './content';
 import { blueprintRoute, categoryName, folderName, isListed, type Catalog } from './catalog';
 import { listedPosts, postRoute, type BlogIndex } from './blogCore';
-import { toolSections, tutorials } from './data/tools';
+import { wikiRoute, type WikiIndex } from './wikiCore';
+import { toolSections } from './data/tools';
 import { benchmarkMatchText } from './benchmarkFilters';
 import { saveFolderRoute, searchSaves, type SaveTree } from './saves';
 
-export type SearchKind = 'benchmark' | 'blueprint' | 'tool' | 'post' | 'save';
+export type SearchKind = 'benchmark' | 'blueprint' | 'tool' | 'wiki' | 'post' | 'save';
 
 export interface SearchEntry {
   kind: SearchKind;
@@ -29,6 +30,7 @@ export const SEARCH_GROUPS: Array<{ kind: SearchKind; label: string }> = [
   { kind: 'benchmark', label: 'Benchmarks' },
   { kind: 'blueprint', label: 'Blueprints' },
   { kind: 'tool', label: 'Tools' },
+  { kind: 'wiki', label: 'Wiki' },
   { kind: 'post', label: 'Blog posts' },
   { kind: 'save', label: 'Save files' },
 ];
@@ -73,9 +75,6 @@ export function staticEntries(): SearchEntry[] {
       });
     }
   }
-  for (const t of tutorials) {
-    entries.push({ kind: 'tool', title: t.label, to: '/tools', haystack: hay(t.label) });
-  }
   return entries;
 }
 
@@ -87,6 +86,17 @@ export function postEntries(index: BlogIndex): SearchEntry[] {
     detail: p.description,
     to: postRoute(p.slug),
     haystack: hay(p.title, p.description, ...p.tags),
+  }));
+}
+
+/** Wiki pages, by title, from the live wiki index: matched on title, former titles, headings and excerpt. */
+export function wikiEntries(index: WikiIndex): SearchEntry[] {
+  return index.pages.map((p) => ({
+    kind: 'wiki' as const,
+    title: p.title,
+    detail: p.excerpt || p.folder || undefined,
+    to: wikiRoute(p.slug),
+    haystack: hay(p.title, ...p.aliases, ...p.headings.map((h) => h.text), p.excerpt, p.folder),
   }));
 }
 

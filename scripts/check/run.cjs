@@ -11,6 +11,7 @@ const { spawn } = require('child_process');
 const { chromium } = require('playwright');
 const catalogFixture = require('./fixtures/catalog.cjs');
 const blogFixture = require('./fixtures/blog.cjs');
+const wikiFixture = require('./fixtures/wiki.cjs');
 
 const root = path.resolve(__dirname, '..', '..');
 const pagesDir = path.join(__dirname, 'pages');
@@ -19,6 +20,8 @@ const outDir = path.join(root, 'check-output');
 // The site's avatar (src/components/BrandAvatar.tsx, on every page) is served as this 1 × 1
 // PNG instead of from GitHub; see `offline` below.
 const AVATAR_ORIGIN = 'https://avatars.githubusercontent.com/';
+// Wiki pages embed YouTube players (youtube-nocookie.com); the frame gets this empty page instead.
+const YOUTUBE_EMBED = 'https://www.youtube-nocookie.com/embed/';
 const AVATAR_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 
 const VIEWPORTS = {
@@ -40,6 +43,10 @@ const IGNORED_ERRORS = [
   {
     match: 'vault.abucnasty.dev/blog/index.json',
     why: 'the blog check makes the blog index fail on purpose to see the "Try again" state',
+  },
+  {
+    match: 'vault.abucnasty.dev/wiki/index.json',
+    why: 'the wiki check makes the wiki index fail on purpose to see the "Try again" state',
   },
 ];
 
@@ -101,8 +108,8 @@ async function startServer() {
 
 function loadData() {
   const read = (name) => JSON.parse(fs.readFileSync(path.join(root, 'src', 'generated', name), 'utf8'));
-  // `catalog` and `blog` are the fixtures every page is served in place of the live vault.
-  return { index: read('index.json'), catalog: catalogFixture.index, blog: blogFixture.index, saves: read('saves.json') };
+  // `catalog`, `blog` and `wiki` are the fixtures every page is served in place of the live vault.
+  return { index: read('index.json'), catalog: catalogFixture.index, blog: blogFixture.index, wiki: wikiFixture.index, saves: read('saves.json') };
 }
 
 const results = [];
@@ -158,12 +165,13 @@ async function main() {
 
       // No check may depend on the live internet, so a run gives the same answer wherever and
       // whenever it runs. Every request that leaves the preview server ends up here: the avatar
-      // gets a stand-in, anything else is refused and fails the module's "no page errors"
+      // and YouTube embeds get stand-ins, anything else is refused and fails the module's "no page errors"
       // assertion. The blueprint vault fixture (catalogFixture.install) and a page module's own
       // page.route are registered later, so they win over this.
       const offline = (route) => {
         const req = route.request();
         if (req.url().startsWith(AVATAR_ORIGIN)) return route.fulfill({ status: 200, contentType: 'image/png', body: AVATAR_PNG });
+        if (req.url().startsWith(YOUTUBE_EMBED)) return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Video</title>' });
         let state;
         try {
           state = byPage.get(req.frame().page());

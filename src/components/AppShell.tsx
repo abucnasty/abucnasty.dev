@@ -13,6 +13,7 @@ const navItems = [
   { to: '/blueprints', label: 'Blueprints' },
   { to: '/saves', label: 'Saves' },
   { to: '/tools', label: 'Tools' },
+  { to: '/wiki', label: 'Wiki' },
   { to: '/blog', label: 'Blog' },
 ];
 
@@ -82,7 +83,7 @@ function Shell({ children }: AppShellProps) {
                 color: 'primary.main',
                 fontWeight: 700,
                 letterSpacing: 1,
-                // With five nav items the wordmark only fits beside them from `md`.
+                // With six nav items the wordmark only fits beside them from `md`.
                 display: { xs: 'none', md: 'block' },
               }}
             >
@@ -92,7 +93,8 @@ function Shell({ children }: AppShellProps) {
           <Box sx={{ flexGrow: 1 }} />
 
           {/* Desktop nav */}
-          <Box component="nav" sx={{ display: { xs: 'none', sm: 'flex' }, gap: 3 }}>
+          {/* Six items fit beside the search button at 600 px only with the smaller gap. */}
+          <Box component="nav" sx={{ display: { xs: 'none', sm: 'flex' }, gap: { sm: 2, md: 3 } }}>
             {navItems.map((item) => (
               <Typography
                 key={item.to}
