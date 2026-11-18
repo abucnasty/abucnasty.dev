@@ -75,8 +75,8 @@ test('links: [[...]] and relative markdown links resolve by title, with heading 
   ]) {
     assert.ok(html.includes(`<a href="${href}">${text}</a>`), `${href} ${text} in ${html}`);
   }
-  assert.ok(html.includes('<span class="wiki-missing" title="This page does not exist yet">draft</span>'), html);
-  assert.ok(html.includes('<span class="wiki-missing" title="This page does not exist yet">No Such Page</span>'), html);
+  assert.ok(html.includes('<span class="wiki-missing" title="This page does not exist yet" data-page="Draft Page">draft</span>'), html);
+  assert.ok(html.includes('<span class="wiki-missing" title="This page does not exist yet" data-page="No Such Page">No Such Page</span>'), html);
   assert.deepEqual(resolveWikiHref(index, page('home'), 'Guides/How%20to%20Benchmark.md#Tips'), {
     kind: 'page',
     url: '/wiki/how-to-benchmark#tips',

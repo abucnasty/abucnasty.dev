@@ -27,7 +27,7 @@ const calloutColor: Record<string, (t: Theme) => string> = {
   quote: (t) => t.palette.text.secondary,
 };
 
-const wikiSx = (theme: Theme) => ({
+export const wikiSx = (theme: Theme) => ({
   '& .callout': {
     my: 2,
     px: 2,
@@ -84,8 +84,24 @@ function draftAt(ctx: WikiContext, href: string): boolean {
   return ctx.index.pages.some((p) => p.slug === slug && p.draft);
 }
 
-const makeComponents = (ctx: WikiContext): Components => ({
+const makeComponents = (ctx: WikiContext, editor: boolean): Components => ({
   ...markdownComponents,
+  // For a wiki editor, a link to a page that does not exist yet offers to create it.
+  span({ className, title, children, node }) {
+    const page = node?.properties?.dataPage;
+    if (editor && typeof page === 'string' && page !== '') {
+      return (
+        <Link component={RouterLink} to={`/wiki/all?new=${encodeURIComponent(page)}`} className={className} title="Create this page" data-wiki-create-link>
+          {children}
+        </Link>
+      );
+    }
+    return (
+      <span className={className} title={title}>
+        {children}
+      </span>
+    );
+  },
   // Links within the site stay in the app; everything else opens as the blog's links do. A link to
   // a draft (which only editors can follow) carries a "Draft" mark.
   a({ href, children }) {
@@ -112,9 +128,9 @@ const makeComponents = (ctx: WikiContext): Components => ({
   },
 });
 
-export function WikiMarkdown({ source, context }: { source: string; context: WikiContext }) {
+export function WikiMarkdown({ source, context, editor = false }: { source: string; context: WikiContext; editor?: boolean }) {
   const options = useMemo(() => wikiMarkdownOptions(context), [context]);
-  const components = useMemo(() => makeComponents(context), [context]);
+  const components = useMemo(() => makeComponents(context, editor), [context, editor]);
   const markdown = useMemo(() => prepareWikiSource(source), [source]);
   return (
     <Box sx={[markdownSx, wikiSx]}>

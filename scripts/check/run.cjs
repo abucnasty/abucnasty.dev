@@ -52,6 +52,10 @@ const IGNORED_ERRORS = [
     why: 'the wiki-signin check has the wiki API answer 503 on purpose to see the "couldn\'t check your access" state',
   },
   {
+    match: 'status of 409',
+    why: 'the wiki-editor check has a save answer 409 on purpose to see the "changed since you opened it" state',
+  },
+  {
     match: 'vault.abucnasty.dev/wiki/index.json',
     why: 'the wiki check makes the wiki index fail on purpose to see the "Try again" state',
   },

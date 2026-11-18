@@ -13,6 +13,8 @@ export interface WikiMe {
   displayName: string | null;
   avatarUrl: string | null;
   firstSignIn?: boolean;
+  /** Editors: whether saving works now ("read-only": paused; "unavailable": not set up). */
+  editing?: 'on' | 'read-only' | 'unavailable';
 }
 
 export type WikiSession =
