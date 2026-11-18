@@ -24,7 +24,11 @@ module.exports = {
       const hrefs = await page.$$eval('main a[href^="/wiki/"]', (as) => as.map((a) => a.getAttribute('href')));
       expect(`${viewport}: a markdown link and a [[link]] both reach their pages`, hrefs.includes('/wiki/how-to-benchmark') && hrefs.includes('/wiki/setting-up-arch-to-run-factorio'), hrefs.join(', '));
       const missing = await page.locator('main .wiki-missing').allInnerTexts();
-      expect(`${viewport}: a link to a page nobody wrote shows as missing, not as a link`, missing.join() === 'A Page Nobody Wrote', missing.join());
+      expect(
+        `${viewport}: a link to a page nobody wrote, or to a draft, shows as missing, not as a link`,
+        missing.join() === 'A Page Nobody Wrote,Benchmark Checklist',
+        missing.join(),
+      );
     }
 
     // Following a link stays in the app.

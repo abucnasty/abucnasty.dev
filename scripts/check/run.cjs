@@ -12,6 +12,7 @@ const { chromium } = require('playwright');
 const catalogFixture = require('./fixtures/catalog.cjs');
 const blogFixture = require('./fixtures/blog.cjs');
 const wikiFixture = require('./fixtures/wiki.cjs');
+const wikiApiFixture = require('./fixtures/wiki-api.cjs');
 
 const root = path.resolve(__dirname, '..', '..');
 const pagesDir = path.join(__dirname, 'pages');
@@ -20,6 +21,8 @@ const outDir = path.join(root, 'check-output');
 // The site's avatar (src/components/BrandAvatar.tsx, on every page) is served as this 1 × 1
 // PNG instead of from GitHub; see `offline` below.
 const AVATAR_ORIGIN = 'https://avatars.githubusercontent.com/';
+// Discord avatars of signed-in wiki editors (the wiki API fixture) get the same stand-in.
+const DISCORD_CDN = 'https://cdn.discordapp.com/';
 // Wiki pages embed YouTube players (youtube-nocookie.com); the frame gets this empty page instead.
 const YOUTUBE_EMBED = 'https://www.youtube-nocookie.com/embed/';
 const AVATAR_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
@@ -43,6 +46,10 @@ const IGNORED_ERRORS = [
   {
     match: 'vault.abucnasty.dev/blog/index.json',
     why: 'the blog check makes the blog index fail on purpose to see the "Try again" state',
+  },
+  {
+    match: '/api/wiki/me',
+    why: 'the wiki-signin check has the wiki API answer 503 on purpose to see the "couldn\'t check your access" state',
   },
   {
     match: 'vault.abucnasty.dev/wiki/index.json',
@@ -108,8 +115,9 @@ async function startServer() {
 
 function loadData() {
   const read = (name) => JSON.parse(fs.readFileSync(path.join(root, 'src', 'generated', name), 'utf8'));
-  // `catalog`, `blog` and `wiki` are the fixtures every page is served in place of the live vault.
-  return { index: read('index.json'), catalog: catalogFixture.index, blog: blogFixture.index, wiki: wikiFixture.index, saves: read('saves.json') };
+  // `catalog`, `blog` and `wiki` are the fixtures every page is served in place of the live vault
+  // (wiki.drafts: the drafts the wiki API stand-in gives editors).
+  return { index: read('index.json'), catalog: catalogFixture.index, blog: blogFixture.index, wiki: { ...wikiFixture.index, drafts: wikiFixture.drafts }, saves: read('saves.json') };
 }
 
 const results = [];
@@ -161,6 +169,7 @@ async function main() {
     for (const { mod } of selected) {
       const contexts = [];
       const byPage = new Map(); // Page -> { viewport, errors, requests }
+      const apiCalls = new Map(); // Page -> wiki API requests of its context
       const refused = []; // live requests no page could be found for
 
       // No check may depend on the live internet, so a run gives the same answer wherever and
@@ -170,7 +179,7 @@ async function main() {
       // page.route are registered later, so they win over this.
       const offline = (route) => {
         const req = route.request();
-        if (req.url().startsWith(AVATAR_ORIGIN)) return route.fulfill({ status: 200, contentType: 'image/png', body: AVATAR_PNG });
+        if (req.url().startsWith(AVATAR_ORIGIN) || req.url().startsWith(DISCORD_CDN)) return route.fulfill({ status: 200, contentType: 'image/png', body: AVATAR_PNG });
         if (req.url().startsWith(YOUTUBE_EMBED)) return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Video</title>' });
         let state;
         try {
@@ -208,7 +217,11 @@ async function main() {
       const ctx = {
         base,
         data,
-        async open(urlPath, viewport = 'desktop') {
+        /**
+         * A new browser context at `urlPath`. `opts.wiki` is who the wiki API stand-in says is
+         * signed in (see fixtures/wiki-api.cjs); signed out by default.
+         */
+        async open(urlPath, viewport = 'desktop', opts = {}) {
           if (!VIEWPORTS[viewport]) throw new Error(`unknown viewport "${viewport}"`);
           const context = await browser.newContext({
             viewport: VIEWPORTS[viewport],
@@ -218,7 +231,9 @@ async function main() {
           contexts.push(context);
           await context.route((url) => url.origin !== base, offline);
           await catalogFixture.install(context);
+          const wikiApi = await wikiApiFixture.install(context, base, opts.wiki);
           const page = await context.newPage();
+          apiCalls.set(page, wikiApi);
           watch(page, viewport);
           await ctx.goto(page, urlPath);
           return page;
@@ -227,6 +242,10 @@ async function main() {
         async goto(page, urlPath) {
           await page.goto(base + urlPath, { waitUntil: 'networkidle' });
           await checkSideways(page, urlPath);
+        },
+        /** The wiki API requests (`METHOD path`) the page's context has made so far. */
+        wikiApiCalls(page) {
+          return apiCalls.get(page) ?? [];
         },
         /** URLs the page has requested so far. */
         requests(page) {

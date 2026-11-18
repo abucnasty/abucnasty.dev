@@ -3,6 +3,7 @@
 // from dist/ directly.
 //
 // - GET /api/latest-video: see latestVideo.ts.
+// - /api/wiki/...: sign-in with Discord, the editor check and drafts; see wikiApi.ts.
 // - A blueprint, benchmark or blog page: index.html with that page's title, description,
 //   canonical, Open Graph and Twitter tags, so link previews and crawlers see the page. Blueprints
 //   and blog posts come from the live vault (cached for 60 s), benchmarks from the build.
@@ -15,6 +16,7 @@ import { CATALOG_URL, normaliseCatalog, type Catalog } from '../src/catalogCore.
 import type { ContentIndex } from '../src/content.ts';
 import contentIndex from '../src/generated/index.json';
 import { latestVideo } from './latestVideo.ts';
+import { createWikiApi, WIKI_API } from './wikiApi.ts';
 import {
   absoluteUrl,
   benchmarkPreview,
@@ -27,6 +29,9 @@ import {
   type PreviewRoute,
 } from './previews.ts';
 
+/** Recent role checks (wikiApi.ts), a few minutes each; a named cache, never served to visitors. */
+const WIKI_ACCESS_CACHE = 'wiki-access';
+
 // Known at build time, so bundled into the Worker by wrangler: no extra file or request.
 const benchmarks = (contentIndex as ContentIndex).benchmarks;
 
@@ -36,6 +41,10 @@ export default {
     if (url.pathname === '/api/latest-video') {
       if (request.method !== 'GET' && request.method !== 'HEAD') return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } });
       return latestVideo(request, env, ctx);
+    }
+    if (url.pathname.startsWith(WIKI_API)) {
+      const cache = await caches.open(WIKI_ACCESS_CACHE).catch(() => null);
+      return createWikiApi(env, { fetch: (input, init) => fetch(input, init), cache, now: Date.now })(request);
     }
 
     const route = request.method === 'GET' || request.method === 'HEAD' ? matchRoute(url) : null;

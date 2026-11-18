@@ -2,7 +2,8 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "abucnasty-dev",
   "compatibility_date": "2026-11-10",
-  // Handles /api/latest-video and the link-preview tags of a few routes (see worker/index.ts).
+  // Handles /api/latest-video, the wiki's sign-in and drafts (/api/wiki/...) and the link-preview
+  // tags of a few routes (see worker/index.ts).
   "main": "worker/index.ts",
   "assets": {
     "directory": "./dist",
@@ -24,12 +25,27 @@
   },
   "vars": {
     // Base of the canonical and og:url tags the Worker writes. index.html's own tags are separate.
-    "SITE_URL": "https://abucnasty.dev"
+    "SITE_URL": "https://abucnasty.dev",
+    // Wiki sign-in with Discord (worker/wikiApi.ts). Public values: the buc-bot application, the
+    // server whose "Wiki Editor" role makes someone a wiki editor, and (from step 3) the channel
+    // edits are announced in. The OAuth2 redirect registered in Discord is exactly
+    // <SITE_URL>/api/wiki/auth/callback.
+    "DISCORD_CLIENT_ID": "1572695514938613760",
+    "DISCORD_GUILD_ID": "1381752136450441266",
+    "WIKI_EDITOR_ROLE_ID": "1572672305019101214",
+    "WIKI_ANNOUNCE_CHANNEL_ID": "1571207361769644142"
   },
+  // The vault's catalog bucket, read only: wiki-drafts/ holds the draft pages, which the vault host
+  // never serves; /api/wiki/drafts/... serves them to wiki editors.
+  "r2_buckets": [{ "binding": "VAULT_CATALOG", "bucket_name": "factorio-blueprints-catalog" }],
   "secrets": {
     // YouTube Data API v3 key for /api/latest-video. The deploy workflow uploads it from the
     // YOUTUBE_API_KEY repository secret; locally it comes from .dev.vars.
-    "required": ["YOUTUBE_API_KEY"]
+    // DISCORD_CLIENT_SECRET (buc-bot's OAuth2 secret), DISCORD_BOT_TOKEN (buc-bot's token, to look
+    // up server members) and WIKI_SESSION_SECRET (random, at least 32 bytes; signs the wiki session
+    // cookies) are set on the Worker by hand (`wrangler secret put`), not by the deploy workflow,
+    // which keeps them. Changing WIKI_SESSION_SECRET signs everyone out.
+    "required": ["YOUTUBE_API_KEY", "DISCORD_CLIENT_SECRET", "DISCORD_BOT_TOKEN", "WIKI_SESSION_SECRET"]
   },
   // The public address. A custom domain: wrangler deploy creates the DNS record and certificate
   // on the abucnasty.dev zone, which must be in the same Cloudflare account. www.abucnasty.dev is

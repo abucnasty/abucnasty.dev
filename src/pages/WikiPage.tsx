@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, Link as RouterLink, useLocation, useParams } from 'react-router-dom';
 import { Box, Button, Stack } from '@mui/material';
 import { PageHeader } from '../components/PageHeader';
+import { DraftBanner, DraftChip, WikiFooter, WikiSignInNotice } from '../components/WikiAccess';
 import { WikiMarkdown } from '../components/WikiMarkdown';
 import { WikiLoadFailed, WikiLoading, WikiPageNotFound } from '../components/WikiStates';
 import { layout } from '../layout';
@@ -24,18 +25,19 @@ function usePageBody(page: WikiPageMeta | undefined): { body: Body; retry: () =>
   const [attempt, setAttempt] = useState(0);
   const slug = page?.slug;
   const blob = page?.blob;
+  const draft = page?.draft === true;
   useEffect(() => {
     if (!slug) return;
     let live = true;
     setBody({ status: 'loading' });
-    loadWikiMarkdown(slug).then(
+    loadWikiMarkdown(slug, draft).then(
       (markdown) => live && setBody({ status: 'ready', markdown }),
       () => live && setBody({ status: 'failed' }),
     );
     return () => {
       live = false;
     };
-  }, [slug, blob, attempt]);
+  }, [slug, blob, draft, attempt]);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   return { body, retry };
 }
@@ -60,7 +62,10 @@ const allPagesButton = (
   </Button>
 );
 
-/** /wiki (the front page, wiki/Home.md) and /wiki/<slug>; a former title's address redirects. */
+/**
+ * /wiki (the front page, wiki/Home.md) and /wiki/<slug>; a former title's address redirects. A
+ * draft shows only to a signed-in wiki editor; for anyone else it is a page that does not exist.
+ */
 export function WikiPage() {
   const { slug: param } = useParams();
   const { search, hash } = useLocation();
@@ -77,19 +82,29 @@ export function WikiPage() {
   if (!page || !context) {
     const moved = findWikiAlias(state.index, slug);
     if (moved) return <Navigate to={`${wikiRoute(moved.slug)}${search}${hash}`} replace />;
-    return <WikiPageNotFound slug={slug} />;
+    // It may be a draft: wait until it is known whether this visitor gets them.
+    if (state.draftsPending) return <WikiLoading label="Loading the page" />;
+    return (
+      <Stack spacing={2}>
+        <WikiSignInNotice />
+        <WikiPageNotFound slug={slug} />
+        <WikiFooter />
+      </Stack>
+    );
   }
 
   const home = page.slug === WIKI_HOME;
-  const pages = state.index.pages.length;
+  const pages = state.index.pages.filter((p) => !p.draft).length;
   return (
     <Stack spacing={2}>
+      <WikiSignInNotice />
       <PageHeader
         overline={home ? undefined : ['Wiki', ...(page.folder ? page.folder.split('/') : [])].join(' / ')}
         title={home ? 'Wiki' : page.title}
-        meta={home ? `${pages} ${pages === 1 ? 'page' : 'pages'}` : undefined}
+        meta={home ? `${pages} ${pages === 1 ? 'page' : 'pages'}` : page.draft ? <DraftChip /> : undefined}
         actions={allPagesButton}
       />
+      {page.draft && <DraftBanner />}
       <Box
         sx={{
           // Headings scrolled to (from a link's #anchor) stay clear of the sticky top bar.
@@ -100,6 +115,7 @@ export function WikiPage() {
         {body.status === 'failed' && <WikiLoadFailed what="The page" onRetry={retry} />}
         {body.status === 'ready' && <WikiMarkdown source={body.markdown} context={context} />}
       </Box>
+      <WikiFooter />
     </Stack>
   );
 }

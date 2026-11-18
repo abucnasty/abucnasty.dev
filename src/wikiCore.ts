@@ -38,6 +38,8 @@ export interface WikiPageMeta {
   /** Paths of the files it uses (as WikiFile.path). */
   files: string[];
   blob: string;
+  /** A draft: only signed-in wiki editors get it (see mergeWikiDrafts). */
+  draft?: boolean;
 }
 
 export interface WikiFile {
@@ -103,6 +105,30 @@ export function wikiRoute(slug: string): string {
   return slug === WIKI_HOME ? '/wiki' : `/wiki/${encodeURIComponent(slug)}`;
 }
 
+/** The drafts index, from the site's Worker: editors only (worker/wikiApi.ts). */
+export const WIKI_DRAFTS_INDEX_URL = '/api/wiki/drafts/index.json';
+
+/** A draft's markdown, from the site's Worker: editors only. */
+export function wikiDraftMarkdownUrl(slug: string): string {
+  return `/api/wiki/drafts/${encodeURIComponent(slug)}.md`;
+}
+
+/**
+ * The published index with the drafts added, marked `draft`, for an editor. A draft never
+ * replaces a published page, and its former titles are dropped (they redirect nothing). Files are
+ * the union: a draft's images are published on the vault host like any other.
+ */
+export function mergeWikiDrafts(index: WikiIndex, drafts: WikiIndex): WikiIndex {
+  const taken = new Set(index.pages.map((p) => p.slug));
+  const extra = drafts.pages.filter((p) => !taken.has(p.slug)).map((p) => ({ ...p, aliases: [], draft: true }));
+  const have = new Set(index.files.map((f) => f.path));
+  return {
+    ...index,
+    pages: [...index.pages, ...extra].sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase())),
+    files: [...index.files, ...drafts.files.filter((f) => !have.has(f.path))],
+  };
+}
+
 /** A page's markdown on the vault host. */
 export function wikiMarkdownUrl(slug: string): string {
   return `${WIKI_BASE}/${encodeURIComponent(slug)}.md`;
@@ -117,9 +143,9 @@ export function findWikiPage(index: WikiIndex, slug: string): WikiPageMeta | und
   return index.pages.find((p) => p.slug === slug);
 }
 
-/** The page an address belongs to by one of its former titles. */
+/** The published page an address belongs to by one of its former titles. */
 export function findWikiAlias(index: WikiIndex, slug: string): WikiPageMeta | undefined {
-  return index.pages.find((p) => p.aliases.some((a) => wikiSlug(a) === slug));
+  return index.pages.find((p) => !p.draft && p.aliases.some((a) => wikiSlug(a) === slug));
 }
 
 /** The page a link names, by title, then by former title, ignoring case; a path or ".md" may come with it. */

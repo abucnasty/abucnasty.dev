@@ -94,7 +94,8 @@ export function wikiEntries(index: WikiIndex): SearchEntry[] {
   return index.pages.map((p) => ({
     kind: 'wiki' as const,
     title: p.title,
-    detail: p.excerpt || p.folder || undefined,
+    // Drafts are only in an editor's index; they say so.
+    detail: p.draft ? `Draft${p.excerpt || p.folder ? ` · ${p.excerpt || p.folder}` : ''}` : p.excerpt || p.folder || undefined,
     to: wikiRoute(p.slug),
     haystack: hay(p.title, ...p.aliases, ...p.headings.map((h) => h.text), p.excerpt, p.folder),
   }));
