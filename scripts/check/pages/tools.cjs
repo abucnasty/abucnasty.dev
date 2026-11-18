@@ -17,10 +17,9 @@ module.exports = {
   async run({ open, expect, aboveFold, shot }) {
     const expected = dataUrls();
     const expectedSet = new Set(expected);
-    // Entries (tools, utilities, mods) plus tutorials, from the same file.
+    // Entries (tools, utilities, mods) plus the one pointer to the wiki's guides, from the same file.
     const entryCount = (fs.readFileSync(DATA, 'utf8').match(/^\s+name: '/gm) || []).length;
-    const tutorialCount = (fs.readFileSync(DATA, 'utf8').match(/^\s+kind: '(guide|video)',/gm) || []).length;
-    const rowsExpected = entryCount + tutorialCount;
+    const rowsExpected = entryCount + 1;
 
     for (const viewport of ['desktop', 'phone']) {
       const page = await open('/tools', viewport);
@@ -37,10 +36,13 @@ module.exports = {
         `missing: ${JSON.stringify(missing)} extra: ${JSON.stringify(extra)}`);
       expect(`${viewport}: outbound links open in a new tab`, (await page.locator('main a[href^="http"]:not([target="_blank"])').count()) === 0);
 
+      const wikiRow = await page.locator('main a[data-row][href="/wiki/all"]').count();
+      expect(`${viewport}: "Learn to benchmark" points to the wiki's guides`, wikiRow === 1, `${wikiRow} rows`);
+
       if (viewport === 'desktop') {
         const rows = await page.locator('[data-row]').count();
         const visible = await aboveFold(page, '[data-row]');
-        expect(`desktop: row count equals entries + tutorials (${rowsExpected})`, rows === rowsExpected, `rows=${rows}`);
+        expect(`desktop: row count equals entries + the wiki pointer (${rowsExpected})`, rows === rowsExpected, `rows=${rows}`);
         expect(`desktop: every row is above the fold (${visible} of ${rows})`, visible === rows, `${visible}/${rows}`);
         const height = await page.evaluate(() => document.documentElement.scrollHeight);
         expect(`desktop: page height is at most one window (${height} px)`, height <= 800, `${height}px`);

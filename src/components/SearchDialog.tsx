@@ -18,7 +18,8 @@ import { layout } from '../layout';
 import { loadSaveTree, loadedSaveTree, type SaveTree } from '../saves';
 import { useCatalog, type Catalog } from '../catalog';
 import { useBlogIndex, type BlogIndex } from '../blog';
-import { SEARCH_GROUPS, blueprintEntries, postEntries, saveEntries, search, staticEntries, type SearchEntry, type SearchKind } from '../search';
+import { useWikiIndex, type WikiIndex } from '../wiki';
+import { SEARCH_GROUPS, blueprintEntries, postEntries, saveEntries, search, staticEntries, wikiEntries, type SearchEntry, type SearchKind } from '../search';
 
 const GROUP_LIMIT = 6;
 
@@ -91,6 +92,13 @@ function postsOf(index: BlogIndex | null): SearchEntry[] {
   return postCache.entries;
 }
 
+let wikiCache: { index: WikiIndex; entries: SearchEntry[] } | null = null;
+function wikiOf(index: WikiIndex | null): SearchEntry[] {
+  if (!index) return [];
+  if (wikiCache?.index !== index) wikiCache = { index, entries: wikiEntries(index) };
+  return wikiCache.entries;
+}
+
 interface Row {
   id: string;
   entry: Pick<SearchEntry, 'title' | 'detail' | 'to' | 'external'>;
@@ -118,8 +126,9 @@ function SearchBody({ onClose }: { onClose: () => void }) {
   const [failed, setFailed] = useState(false);
   // The blueprint catalog is fetched live (once per page load) as soon as the dialog opens.
   const catalogState = useCatalog();
-  // So is the blog index.
+  // So are the blog and wiki indexes.
   const blogState = useBlogIndex();
+  const wikiState = useWikiIndex();
 
   const q = query.trim();
 
@@ -142,7 +151,7 @@ function SearchBody({ onClose }: { onClose: () => void }) {
     const flat: Row[] = [];
     const out: Group[] = [];
     if (!q) return { groups: out, rows: flat };
-    const found = search([...statics(), ...blueprintsOf(catalogState.catalog), ...postsOf(blogState.index)], q);
+    const found = search([...statics(), ...blueprintsOf(catalogState.catalog), ...wikiOf(wikiState.index), ...postsOf(blogState.index)], q);
     const saves = tree ? search(saveEntries(tree, q), q) : [];
     const allLabel: Partial<Record<SearchKind, { to: string; noun: string }>> = {
       benchmark: { to: `/benchmarks?q=${encodeURIComponent(q)}`, noun: 'benchmarks' },
@@ -169,7 +178,13 @@ function SearchBody({ onClose }: { onClose: () => void }) {
                 : blogState.status === 'failed'
                   ? 'Blog posts could not be loaded.'
                   : undefined
-              : undefined;
+              : kind === 'wiki' && list.length === 0
+                ? wikiState.status === 'loading'
+                  ? 'Searching the wiki…'
+                  : wikiState.status === 'failed'
+                    ? 'The wiki could not be loaded.'
+                    : undefined
+                : undefined;
       if (list.length === 0 && !message) continue;
       const rowsOfGroup: Row[] = list.slice(0, GROUP_LIMIT).map((entry, i) => ({
         id: `${uid}-${kind}-${i}`,
@@ -189,7 +204,7 @@ function SearchBody({ onClose }: { onClose: () => void }) {
       out.push({ kind, label, rows: rowsOfGroup, message });
     }
     return { groups: out, rows: flat };
-  }, [q, tree, failed, loadingSaves, uid, catalogState.catalog, catalogState.status, blogState.index, blogState.status]);
+  }, [q, tree, failed, loadingSaves, uid, catalogState.catalog, catalogState.status, blogState.index, blogState.status, wikiState.index, wikiState.status]);
 
   const activeRow: Row | undefined = rows[active];
 

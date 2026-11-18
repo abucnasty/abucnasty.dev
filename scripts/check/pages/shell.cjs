@@ -8,7 +8,7 @@ module.exports = {
     expect('header renders', await page.locator('header').first().isVisible());
     expect('footer renders', await page.locator('footer').first().isVisible());
 
-    for (const href of ['/benchmarks', '/saves', '/blueprints', '/tools', '/blog']) {
+    for (const href of ['/benchmarks', '/saves', '/blueprints', '/tools', '/wiki', '/blog']) {
       expect(`header menu links to ${href}`, (await page.locator(`header a[href="${href}"]`).count()) > 0);
     }
 
@@ -19,8 +19,8 @@ module.exports = {
 
     const labels = (await page.locator('header nav a').allInnerTexts()).map((t) => t.trim());
     expect(
-      'desktop menu is Benchmarks, Blueprints, Saves, Tools, Blog',
-      labels.join(', ').toLowerCase() === 'benchmarks, blueprints, saves, tools, blog',
+      'desktop menu is Benchmarks, Blueprints, Saves, Tools, Wiki, Blog',
+      labels.join(', ').toLowerCase() === 'benchmarks, blueprints, saves, tools, wiki, blog',
       labels.join(', '),
     );
 

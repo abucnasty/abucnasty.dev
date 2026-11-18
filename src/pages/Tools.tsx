@@ -2,25 +2,19 @@ import type { ReactNode } from 'react';
 import { Box, Button, Stack, Typography } from '@mui/material';
 import GitHubIcon from '@mui/icons-material/GitHub';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import YouTubeIcon from '@mui/icons-material/YouTube';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
 import { PageHeader } from '../components/PageHeader';
 import { SectionHeader } from '../components/SectionHeader';
 import { ListRow, RowGroup } from '../components/ListRow';
 import { layout } from '../layout';
-import { toolSections, tutorials } from '../data/tools';
-import type { ToolEntry, ToolLink, ToolLinkKind, Tutorial } from '../data/tools';
+import { learnLink, toolSections } from '../data/tools';
+import type { ToolEntry, ToolLink, ToolLinkKind } from '../data/tools';
 
 const linkIcon: Record<ToolLinkKind, ReactNode> = {
   github: <GitHubIcon />,
   source: <GitHubIcon />,
   app: <OpenInNewIcon />,
   'mod-portal': <OpenInNewIcon />,
-};
-
-const tutorialIcon: Record<Tutorial['kind'], ReactNode> = {
-  guide: <MenuBookIcon fontSize="small" sx={{ color: 'primary.main' }} />,
-  video: <YouTubeIcon fontSize="small" sx={{ color: 'primary.main' }} />,
 };
 
 function LinkButton({ link, toolName }: { link: ToolLink; toolName: string }) {
@@ -114,14 +108,11 @@ export function Tools() {
             New to Factorio benchmarking? Start here.
           </Typography>
           <RowGroup>
-            {tutorials.map((tutorial) => (
-              <ListRow
-                key={tutorial.url}
-                href={tutorial.url}
-                lead={tutorialIcon[tutorial.kind]}
-                title={tutorial.label}
-              />
-            ))}
+            <ListRow
+              to={learnLink.to}
+              lead={<MenuBookIcon fontSize="small" sx={{ color: 'primary.main' }} />}
+              title={learnLink.label}
+            />
           </RowGroup>
         </Box>
       </Box>

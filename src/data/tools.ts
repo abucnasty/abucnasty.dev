@@ -73,21 +73,11 @@ export const toolSections: ToolSection[] = [
   },
 ];
 
-export interface Tutorial {
-  kind: 'guide' | 'video';
-  label: string;
-  url: string;
-}
-
-export const tutorials: Tutorial[] = [
-  {
-    kind: 'guide',
-    label: 'How to Benchmark — written guide',
-    url: 'https://github.com/abucnasty/factorio-benchmarks/blob/master/docs/guides/how-to-benchmark.md',
-  },
-  {
-    kind: 'video',
-    label: 'How to Benchmark — video walkthrough',
-    url: 'https://youtu.be/pXz01Be-9hE',
-  },
-];
+/**
+ * The Tools page's pointer for readers learning to benchmark: the guides (written guide and video
+ * walkthrough) live in the wiki now.
+ */
+export const learnLink = {
+  label: 'Benchmarking guides in the wiki',
+  to: '/wiki/all',
+};

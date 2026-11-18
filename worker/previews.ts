@@ -2,6 +2,10 @@
 // tags should carry. Pure (no Worker globals), so it is unit-tested under Node (previews.test.ts).
 import { categoryName, folderName, imageUrl, type Catalog, type NodeKind } from '../src/catalogCore.ts';
 import { findEntry, findNode, nodeLabel, shownImage } from '../src/pages/blueprints/model.ts';
+import { wikiSlug } from '../src/wikiCore.ts';
+
+const WIKI_HOME = 'home';
+const WIKI_ALL = 'all';
 
 export interface Preview {
   title: string;
@@ -15,7 +19,9 @@ export interface Preview {
 export type PreviewRoute =
   | { kind: 'blueprint'; path: string; entry: string | null }
   | { kind: 'benchmark'; slug: string }
-  | { kind: 'blog'; slug: string };
+  | { kind: 'blog'; slug: string }
+  /** `slug` is "" for /wiki (the front page, "home") and "all" for the list of pages. */
+  | { kind: 'wiki'; slug: string };
 
 /** The fields of a benchmark (src/generated/index.json) a preview uses. */
 export interface BenchmarkInfo {
@@ -31,6 +37,14 @@ export interface PostInfo {
   slug: string;
   title: string;
   description?: string;
+}
+
+/** The fields of a wiki page (the vault's wiki/index.json, see src/wikiCore.ts) a preview uses. */
+export interface WikiPageInfo {
+  slug: string;
+  title: string;
+  excerpt?: string;
+  aliases?: string[];
 }
 
 const DESCRIPTION_MAX = 200;
@@ -54,6 +68,12 @@ export function matchRoute(url: URL): PreviewRoute | null {
     if (!path) return null;
     const entry = trimSlashes(url.searchParams.get('entry') ?? '') || null;
     return { kind: 'blueprint', path, entry };
+  }
+  if (/^\/wiki\/?$/.test(pathname)) return { kind: 'wiki', slug: '' };
+  const wiki = /^\/wiki\/([^/]+)\/?$/.exec(pathname);
+  if (wiki) {
+    const slug = decode(wiki[1]);
+    return slug ? { kind: 'wiki', slug } : null;
   }
   const one = /^\/(benchmarks|blog)\/([^/]+)\/?$/.exec(pathname);
   if (one) {
@@ -123,6 +143,36 @@ export function blogPreview(posts: readonly PostInfo[], slug: string): Preview |
   const p = posts.find((x) => x.slug === slug);
   if (!p) return null;
   return { title: p.title, description: clip(p.description || p.title), path: `/blog/${encodeURIComponent(p.slug)}` };
+}
+
+/**
+ * A wiki page by its slug ("" for /wiki, the front page "home"), or the list of every page; null
+ * for any other slug, /wiki/home and former titles included (see wikiRedirect).
+ */
+export function wikiPreview(pages: readonly WikiPageInfo[], slug: string): Preview | null {
+  if (slug === WIKI_ALL) {
+    return { title: 'All wiki pages', description: `Every page of the Factorio benchmarking and UPS research wiki (${pages.length}).`, path: '/wiki/all' };
+  }
+  const p = pages.find((x) => x.slug === (slug === '' ? WIKI_HOME : slug));
+  if (!p || slug === WIKI_HOME) return null;
+  const home = p.slug === WIKI_HOME;
+  return {
+    title: home ? 'Wiki' : p.title,
+    description: clip(p.excerpt || `${p.title}, a page of the Factorio benchmarking and UPS research wiki.`),
+    path: home ? '/wiki' : `/wiki/${encodeURIComponent(p.slug)}`,
+  };
+}
+
+/**
+ * Where an address that is not a page goes: /wiki/home to /wiki, a former title (an alias) to its
+ * page. Null when it is neither.
+ */
+export function wikiRedirect(pages: readonly WikiPageInfo[], slug: string): string | null {
+  if (slug === WIKI_HOME) return pages.some((p) => p.slug === WIKI_HOME) ? '/wiki' : null;
+  if (pages.some((p) => p.slug === slug)) return null;
+  const to = pages.find((p) => (p.aliases ?? []).some((a) => wikiSlug(a) === slug));
+  if (!to) return null;
+  return to.slug === WIKI_HOME ? '/wiki' : `/wiki/${encodeURIComponent(to.slug)}`;
 }
 
 /** `path` on the site at `siteUrl` (a trailing slash on `siteUrl` is ignored). */
