@@ -152,3 +152,46 @@ export function avatarUrl(opts: { userId: string; guildId: string; memberAvatar:
   const index = Number((BigInt(opts.userId) >> 22n) % 6n);
   return `${CDN}/embed/avatars/${index}.png`;
 }
+
+/** A wiki edit, for the announcement in the edits channel. */
+export interface EditAnnouncement {
+  title: string;
+  url: string;
+  summary: string;
+  editor: string;
+  created: boolean;
+}
+
+/**
+ * Post an edit to a channel as the bot (Create Message: POST /channels/{id}/messages, needs the
+ * bot's View Channel and Send Messages there). An embed with the page linked; `allowed_mentions`
+ * with no `parse` so nothing in a summary can ping anyone. Never throws: the answer is whether
+ * Discord took it (and why not).
+ */
+export async function announceEdit(f: Fetch, opts: { botToken: string; channelId: string; edit: EditAnnouncement }): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!isId(opts.channelId)) return { ok: false, reason: 'bad channel id' };
+  const e = opts.edit;
+  const body = {
+    allowed_mentions: { parse: [] },
+    embeds: [
+      {
+        title: `${e.created ? 'New page: ' : ''}${e.title}`.slice(0, 256),
+        url: e.url,
+        description: e.summary.slice(0, 1000),
+        author: { name: e.editor.slice(0, 256) },
+        footer: { text: 'Wiki edit · the site updates in about a minute' },
+        color: 0xfca300,
+      },
+    ],
+  };
+  try {
+    const res = await f(
+      `${DISCORD_API}/channels/${opts.channelId}/messages`,
+      timed({ method: 'POST', headers: { Authorization: `Bot ${opts.botToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+    );
+    await res.body?.cancel();
+    return res.ok ? { ok: true } : { ok: false, reason: `messages: HTTP ${res.status}` };
+  } catch (err) {
+    return { ok: false, reason: `messages: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}

@@ -3,7 +3,8 @@
 // from dist/ directly.
 //
 // - GET /api/latest-video: see latestVideo.ts.
-// - /api/wiki/...: sign-in with Discord, the editor check and drafts; see wikiApi.ts.
+// - /api/wiki/...: sign-in with Discord, the editor check, drafts, and editing pages (source and
+//   save); see wikiApi.ts and wikiSave.ts.
 // - A blueprint, benchmark or blog page: index.html with that page's title, description,
 //   canonical, Open Graph and Twitter tags, so link previews and crawlers see the page. Blueprints
 //   and blog posts come from the live vault (cached for 60 s), benchmarks from the build.
@@ -17,6 +18,8 @@ import type { ContentIndex } from '../src/content.ts';
 import contentIndex from '../src/generated/index.json';
 import { latestVideo } from './latestVideo.ts';
 import { createWikiApi, WIKI_API } from './wikiApi.ts';
+import { takeSaveSlot } from './rateLimitObject.ts';
+import type { TokenCache } from './github.ts';
 import {
   absoluteUrl,
   benchmarkPreview,
@@ -31,6 +34,11 @@ import {
 
 /** Recent role checks (wikiApi.ts), a few minutes each; a named cache, never served to visitors. */
 const WIKI_ACCESS_CACHE = 'wiki-access';
+/** The GitHub App's installation token, reused by this isolate until shortly before it expires. */
+const githubTokens: TokenCache = new Map();
+
+// The save rate limit's Durable Object (one per editor; see rateLimit.ts).
+export { WikiRateLimiter } from './rateLimitObject.ts';
 
 // Known at build time, so bundled into the Worker by wrangler: no extra file or request.
 const benchmarks = (contentIndex as ContentIndex).benchmarks;
@@ -44,7 +52,14 @@ export default {
     }
     if (url.pathname.startsWith(WIKI_API)) {
       const cache = await caches.open(WIKI_ACCESS_CACHE).catch(() => null);
-      return createWikiApi(env, { fetch: (input, init) => fetch(input, init), cache, now: Date.now })(request);
+      return createWikiApi(env, {
+        fetch: (input, init) => fetch(input, init),
+        cache,
+        now: Date.now,
+        tokens: githubTokens,
+        takeSlot: (userId) => takeSaveSlot(env.WIKI_RATE_LIMIT, userId),
+        waitUntil: (p) => ctx.waitUntil(p),
+      })(request);
     }
 
     const route = request.method === 'GET' || request.method === 'HEAD' ? matchRoute(url) : null;

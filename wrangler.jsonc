@@ -33,11 +33,33 @@
     "DISCORD_CLIENT_ID": "1572695514938613760",
     "DISCORD_GUILD_ID": "1381752136450441266",
     "WIKI_EDITOR_ROLE_ID": "1572672305019101214",
-    "WIKI_ANNOUNCE_CHANNEL_ID": "1571207361769644142"
+    "WIKI_ANNOUNCE_CHANNEL_ID": "1571207361769644142",
+    // Saving wiki pages (worker/wikiSave.ts) commits to abucnasty/factorio-vault as a GitHub App
+    // installed only on that repository with Contents: read and write. Its numeric App ID and the
+    // installation's ID (both public). The private key is the GITHUB_APP_PRIVATE_KEY secret
+    // (below); without it editing says it isn't set up.
+    "GITHUB_APP_ID": "5824707",
+    "GITHUB_APP_INSTALLATION_ID": "183493448"
+    // WIKI_READ_ONLY, the editing emergency stop, is deliberately not here: set it to "true" in
+    // the Cloudflare dashboard (Workers > abucnasty-dev > Settings > Variables and Secrets) and
+    // every save is refused at once. keep_vars (below) stops a deploy from deleting it.
   },
+  // Keep variables added in the dashboard (WIKI_READ_ONLY) when wrangler deploys; without this a
+  // deploy deletes every var not listed above. Vars listed above still take their value from here.
+  "keep_vars": true,
   // The vault's catalog bucket, read only: wiki-drafts/ holds the draft pages, which the vault host
   // never serves; /api/wiki/drafts/... serves them to wiki editors.
-  "r2_buckets": [{ "binding": "VAULT_CATALOG", "bucket_name": "factorio-blueprints-catalog" }],
+  // LFS_BUCKET: the vault's Git LFS objects, where images added in the wiki editor are stored
+  // (key <oid[0:2]>/<oid[2:4]>/<oid>, as the vault's LFS server keeps them); their LFS pointers are
+  // committed beside the page.
+  "r2_buckets": [
+    { "binding": "VAULT_CATALOG", "bucket_name": "factorio-blueprints-catalog" },
+    { "binding": "LFS_BUCKET", "bucket_name": "factorio-blueprints-lfs" }
+  ],
+  // The wiki save rate limit (worker/rateLimit.ts): one object per editor. Deploying creates it
+  // from the migration; there is nothing to set up by hand.
+  "durable_objects": { "bindings": [{ "name": "WIKI_RATE_LIMIT", "class_name": "WikiRateLimiter" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WikiRateLimiter"] }],
   "secrets": {
     // YouTube Data API v3 key for /api/latest-video. The deploy workflow uploads it from the
     // YOUTUBE_API_KEY repository secret; locally it comes from .dev.vars.
@@ -45,7 +67,9 @@
     // up server members) and WIKI_SESSION_SECRET (random, at least 32 bytes; signs the wiki session
     // cookies) are set on the Worker by hand (`wrangler secret put`), not by the deploy workflow,
     // which keeps them. Changing WIKI_SESSION_SECRET signs everyone out.
-    "required": ["YOUTUBE_API_KEY", "DISCORD_CLIENT_SECRET", "DISCORD_BOT_TOKEN", "WIKI_SESSION_SECRET"]
+    // GITHUB_APP_PRIVATE_KEY (the wiki GitHub App's private key, PEM, PKCS#8; a PKCS#1 key as
+    // GitHub issues it works too) is set by hand the same way.
+    "required": ["YOUTUBE_API_KEY", "DISCORD_CLIENT_SECRET", "DISCORD_BOT_TOKEN", "WIKI_SESSION_SECRET", "GITHUB_APP_PRIVATE_KEY"]
   },
   // The public address. A custom domain: wrangler deploy creates the DNS record and certificate
   // on the abucnasty.dev zone, which must be in the same Cloudflare account. www.abucnasty.dev is

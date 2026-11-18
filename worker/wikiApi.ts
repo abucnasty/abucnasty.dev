@@ -7,12 +7,17 @@
 //   POST /api/wiki/ack                         an editor has read the first-sign-in notice (same-origin only)
 //   GET  /api/wiki/drafts/index.json           the drafts index (editors only)
 //   GET  /api/wiki/drafts/<slug>.md            a draft's markdown (editors only)
+//   GET  /api/wiki/source?slug=<slug>          a page's file on the vault's main branch, to edit (editors only)
+//   POST /api/wiki/save                        save a page and its new images (editors only, same-origin;
+//                                              the role is looked up live, never cached; see wikiSave.ts)
+//   GET  /api/wiki/image/<oid>                 an image just saved, from the LFS bucket, until the vault
+//                                              publishes it (editors only)
 //
 // Sessions are signed cookies (session.ts), 30 days per device, with no server-side store. The
 // Discord access token is used once in the callback (to read who signed in) and then dropped.
 // An editor is a member of DISCORD_GUILD_ID holding WIKI_EDITOR_ROLE_ID, looked up with the bot
 // token (discord.ts) on each request that needs it; reads (`me`, drafts) may use an answer up to
-// ACCESS_CACHE_SECONDS old. Saving (step 3) must call access() with cached=false. When Discord
+// ACCESS_CACHE_SECONDS old; a save always asks Discord (access() with cached=false). When Discord
 // cannot answer, the answer is a 503 "couldn't check", never a yes and never a silent no.
 //
 // Everything outside Workers globals is passed in (fetch, a cache, the bucket, the clock), so the
@@ -47,6 +52,7 @@ import {
   verifyState,
   type Session,
 } from './session.ts';
+import { editingState, lfsKey, readSource, save, type EditingState, type SaveDeps, type SaveEnv } from './wikiSave.ts';
 
 export const WIKI_API = '/api/wiki/';
 /** R2 keys of the drafts in the catalog bucket (written by the vault's CI; the vault host never serves them). */
@@ -58,7 +64,7 @@ const DEFAULT_RETURN = '/wiki';
 export const SIGNIN_PARAM = 'wiki-signin';
 
 /** The bindings and vars this file reads (a subset of Env, so tests can build one). */
-export interface WikiEnv {
+export interface WikiEnv extends SaveEnv {
   SITE_URL: string;
   DISCORD_CLIENT_ID: string;
   DISCORD_GUILD_ID: string;
@@ -79,6 +85,10 @@ export interface WikiDeps {
   cache: AccessCache | null;
   now: () => number;
   log?: (message: string) => void;
+  /** For saving (wikiSave.ts): GitHub installation tokens kept between requests, the rate limit, ctx.waitUntil. */
+  tokens?: SaveDeps['tokens'];
+  takeSlot?: SaveDeps['takeSlot'];
+  waitUntil?: SaveDeps['waitUntil'];
 }
 
 /** What `me` answers. No secrets: ids, a name and a CDN URL. */
@@ -90,6 +100,8 @@ export interface Me {
   avatarUrl: string | null;
   /** Editors only: true until they have acknowledged the first-sign-in notice on this device. */
   firstSignIn?: boolean;
+  /** Editors only: whether saving works now ("read-only": paused; "unavailable": not set up). */
+  editing?: EditingState;
 }
 
 /** A user's access, as the role check found it. */
@@ -300,6 +312,7 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
     }
     const out: Me = { signedIn: true, editor: a.editor, userId: session.sub, displayName: a.displayName, avatarUrl: a.avatarUrl };
     if (a.editor) {
+      out.editing = editingState(env);
       const ack = await verifyAck(readCookies(request.headers.get('Cookie')).get(ACK_COOKIE), secret!, deps.now());
       out.firstSignIn = ack?.sub !== session.sub;
     }
@@ -315,14 +328,50 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
     return new Response(null, { status: 204, headers });
   }
 
-  /** The editor's session, or the response refusing the request. */
-  async function requireEditor(request: Request): Promise<Session | Response> {
+  /** The editor's session and access, or the response refusing the request. A save passes cached=false. */
+  async function requireEditor(request: Request, cached = true, what = 'to see drafts'): Promise<{ session: Session; access: Access } | Response> {
     const { session } = await sessionOf(request);
-    if (!session) return failure(401, 'signed_out', 'Sign in as a wiki editor to see drafts.', {}, PRIVATE);
-    const a = await access(session, true);
+    if (!session) return failure(401, 'signed_out', `Sign in as a wiki editor ${what}.`, {}, PRIVATE);
+    const a = await access(session, cached);
     if (!a) return failure(503, 'access_check_failed', CHECK_FAILED, {}, PRIVATE);
     if (!a.editor) return failure(403, 'not_editor', "You're signed in, but you don't have wiki access.", {}, PRIVATE);
-    return session;
+    return { session, access: a };
+  }
+
+  const saveDeps: SaveDeps = {
+    fetch: deps.fetch,
+    now: deps.now,
+    tokens: deps.tokens ?? new Map(),
+    takeSlot: deps.takeSlot ?? (() => Promise.reject(new Error('no rate limiter'))),
+    waitUntil: deps.waitUntil,
+    log,
+  };
+
+  async function source(request: Request, url: URL): Promise<Response> {
+    const who = await requireEditor(request, true, 'to edit pages');
+    if (who instanceof Response) return who;
+    const slug = url.searchParams.get('slug') ?? '';
+    if (!isDraftSlug(slug)) return failure(404, 'not_found', 'No such page.', {}, PRIVATE);
+    return readSource(env, saveDeps, slug);
+  }
+
+  /** An image saved with a page, shown to its editor before the vault publishes it. */
+  async function image(request: Request, oid: string): Promise<Response> {
+    const who = await requireEditor(request, true, 'to see this image');
+    if (who instanceof Response) return who;
+    const obj = /^[0-9a-f]{64}$/.test(oid) && env.LFS_BUCKET ? await env.LFS_BUCKET.get(lfsKey(oid)) : null;
+    const type = obj?.httpMetadata?.contentType ?? '';
+    if (!obj || !/^image\/(webp|gif|jpeg)$/.test(type)) return failure(404, 'not_found', 'No such image.', {}, PRIVATE);
+    return new Response(obj.body, { headers: { 'Content-Type': type, 'Content-Length': String(obj.size), ...PRIVATE } });
+  }
+
+  async function saveRequest(request: Request): Promise<Response> {
+    if (!sameOrigin(request)) return failure(403, 'cross_origin', 'Save from the site itself.');
+    // The emergency stop answers before anything else, signed in or not.
+    if (editingState(env) === 'read-only') return save(env, saveDeps, request, { id: '', displayName: '' });
+    const who = await requireEditor(request, false, 'to save');
+    if (who instanceof Response) return who;
+    return save(env, saveDeps, request, { id: who.session.sub, displayName: who.access.displayName });
   }
 
   async function draftsIndexText(): Promise<string | null> {
@@ -378,7 +427,12 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
         return method === 'GET' ? me(request) : only('GET');
       case 'ack':
         return method === 'POST' ? acknowledge(request) : only('POST');
+      case 'source':
+        return method === 'GET' ? source(request, url) : only('GET');
+      case 'save':
+        return method === 'POST' ? saveRequest(request) : only('POST');
     }
+    if (path.startsWith('image/')) return method === 'GET' ? image(request, path.slice('image/'.length)) : only('GET');
     if (path.startsWith('drafts/')) return method === 'GET' ? drafts(request, path.slice('drafts/'.length)) : only('GET');
     return failure(404, 'not_found', 'No such wiki API.');
   };

@@ -212,6 +212,8 @@ test('me: signed out, editor (first sign-in until acknowledged), no role, not in
     displayName: 'Buc the Editor',
     avatarUrl: avatarUrl({ userId: USER, guildId: GUILD, memberAvatar: null, avatar: null }),
     firstSignIn: true,
+    // No GitHub App in these tests: editing is not set up.
+    editing: 'unavailable',
   });
   const member0 = ed.calls[0];
   assert.equal((member0.init?.headers as Record<string, string>).Authorization, 'Bot bot-token-value');
