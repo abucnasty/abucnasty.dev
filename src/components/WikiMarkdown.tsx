@@ -5,6 +5,7 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import { Link as RouterLink } from 'react-router-dom';
 import { CALLOUT_KINDS, prepareWikiSource, wikiMarkdownOptions, type WikiContext } from '../wikiMarkdown';
 import { markdownComponents, markdownSx } from './MarkdownRenderer';
+import { DraftChip } from './WikiAccess';
 
 // A wiki page's markdown, rendered with wikiMarkdown.ts's plugins (no raw HTML) in the site's
 // markdown style, plus the wiki's own pieces: callout boxes, missing-page links and YouTube players.
@@ -70,15 +71,36 @@ const wikiSx = (theme: Theme) => ({
   '& li.task-list-item': { listStyle: 'none', '& input': { mr: 1 } },
 });
 
-const components: Components = {
+/** The draft a site link points at, if it is one (only an editor's index has drafts). */
+function draftAt(ctx: WikiContext, href: string): boolean {
+  const m = /^\/wiki\/([^/?#]+)/.exec(href);
+  if (!m) return false;
+  let slug = m[1];
+  try {
+    slug = decodeURIComponent(slug);
+  } catch {
+    return false;
+  }
+  return ctx.index.pages.some((p) => p.slug === slug && p.draft);
+}
+
+const makeComponents = (ctx: WikiContext): Components => ({
   ...markdownComponents,
-  // Links within the site stay in the app; everything else opens as the blog's links do.
+  // Links within the site stay in the app; everything else opens as the blog's links do. A link to
+  // a draft (which only editors can follow) carries a "Draft" mark.
   a({ href, children }) {
     if (href && href.startsWith('/') && !href.startsWith('//')) {
-      return (
+      const link = (
         <Link component={RouterLink} to={href} color="primary">
           {children}
         </Link>
+      );
+      if (!draftAt(ctx, href)) return link;
+      return (
+        <span className="wiki-draft-link">
+          {link}{' '}
+          <DraftChip />
+        </span>
       );
     }
     const external = !!href && /^https?:\/\//i.test(href);
@@ -88,10 +110,11 @@ const components: Components = {
       </Link>
     );
   },
-};
+});
 
 export function WikiMarkdown({ source, context }: { source: string; context: WikiContext }) {
   const options = useMemo(() => wikiMarkdownOptions(context), [context]);
+  const components = useMemo(() => makeComponents(context), [context]);
   const markdown = useMemo(() => prepareWikiSource(source), [source]);
   return (
     <Box sx={[markdownSx, wikiSx]}>

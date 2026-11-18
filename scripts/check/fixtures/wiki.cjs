@@ -71,6 +71,8 @@ const markdown = {
     '- [How to Benchmark](Guides/How%20to%20Benchmark.md)',
     '- [[Setting Up Arch to Run Factorio]]',
     '- [[A Page Nobody Wrote]]',
+    // A draft: a link for editors (marked "Draft"), missing for everyone else.
+    '- [[Benchmark Checklist]]',
     '',
   ].join('\n'),
   'how-to-benchmark': [
@@ -112,6 +114,34 @@ const markdown = {
   ].join('\n'),
 };
 
+/**
+ * The drafts, as the site's Worker serves them to wiki editors (/api/wiki/drafts/..., stood in for
+ * by wiki-api.cjs): the vault's wiki-drafts/index.json and a draft's markdown.
+ */
+const drafts = {
+  schema: 1,
+  generatedAt: '2026-11-18T00:00:00.000Z',
+  commit: 'fixture',
+  pages: [
+    {
+      title: 'Benchmark Checklist',
+      slug: 'benchmark-checklist',
+      folder: 'Guides',
+      aliases: ['Old Checklist'],
+      headings: [{ depth: 2, text: 'Before you start', id: 'before-you-start' }],
+      excerpt: 'A checklist to run before every benchmark.',
+      links: ['how-to-benchmark'],
+      files: ['Guides/_attachments/engineer_q5.png'],
+      blob: 'e'.repeat(40),
+    },
+  ],
+  files: [index.files[0]],
+};
+
+const draftMarkdown = {
+  'benchmark-checklist': ['A checklist to run before every benchmark.', '', '## Before you start', '', 'Read [[How to Benchmark]] first.', '', '![[engineer_q5.png|64]]', ''].join('\n'),
+};
+
 // A 1 × 1 WebP.
 const WEBP = Buffer.from('UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=', 'base64');
 
@@ -127,4 +157,4 @@ function serve(path) {
   return null;
 }
 
-module.exports = { index, markdown, serve };
+module.exports = { index, markdown, serve, drafts, draftMarkdown };
