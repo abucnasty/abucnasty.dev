@@ -1,4 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Navigate, Link as RouterLink, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Alert, Box, Button, Stack, Tooltip } from '@mui/material';
 import { PageHeader } from '../components/PageHeader';
@@ -136,17 +137,21 @@ export function WikiPage() {
   const shown: Body = saved ? { status: 'ready', markdown: saved.body } : body;
   useScrollToHash(shown.status === 'ready' && !editing, hash);
 
-  const onSaved = (result: { slug: string; draft: boolean; unchanged?: boolean; created?: boolean }) => {
-    setEditing(false);
-    setSavedNotice(
-      result.unchanged
-        ? 'Nothing had changed, so nothing was saved.'
-        : result.draft
-          ? 'Saved as a draft. Wiki editors will see it on the site in about a minute.'
-          : 'Saved. The site updates in about a minute; this is the saved version.',
-    );
-    // A new page is a page now: drop the "create" request so a reload does not open the editor again.
-    if (create) navigate(`${wikiRoute(result.slug)}${search}`, { replace: true, state: null });
+  const onSaved = (result: { slug: string; draft: boolean; unchanged?: boolean; created?: boolean; notice?: string }) => {
+    // Closed before any move to another address, so the editor never opens there.
+    flushSync(() => setEditing(false));
+    const lead = result.unchanged ? 'Nothing had changed, so nothing was saved.' : result.draft ? 'Saved as a draft.' : 'Saved.';
+    const tail = result.unchanged ? '' : result.draft ? 'Wiki editors will see it on the site in about a minute.' : 'The site updates in about a minute; this is the saved version.';
+    const message = [lead, result.notice, tail].filter(Boolean).join(' ');
+    if (result.slug !== slug) {
+      // Saved at another address (the page was renamed meanwhile, or saved anew under another
+      // title): go there, with the notice.
+      flushSync(() => navigate(`${wikiRoute(result.slug)}${search}`, { replace: !!create, state: { notice: message } }));
+    } else {
+      setSavedNotice(message);
+      // A new page is a page now: drop the "create" request so a reload does not open the editor again.
+      if (create) navigate(`${wikiRoute(result.slug)}${search}`, { replace: true, state: null });
+    }
     window.scrollTo({ top: 0 });
   };
   const editor = (target: { slug: string } | { create: { title: string; folder: string } }) => (

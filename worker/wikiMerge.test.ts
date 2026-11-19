@@ -10,6 +10,7 @@ import { signSession, SESSION_COOKIE } from './session.ts';
 import { createWikiApi, type WikiEnv } from './wikiApi.ts';
 import { mergeText } from './wikiMerge.ts';
 import { gitBlobSha } from './wikiSave.ts';
+import { otherEditors, savedNotice, timeAgo } from '../src/wikiEditor/concurrent.ts';
 
 const SITE = 'https://abucnasty.dev';
 const SECRET = 's'.repeat(48);
@@ -418,4 +419,25 @@ test('concurrent edits: a lost role and the emergency stop still refuse before a
   assert.equal(stopped.status, 503);
   assert.equal(stopped.out.error, 'read_only');
   assert.equal(r.v.writes.length, 0);
+});
+
+test('the editor\'s words: who and when, and the notice after a combined or moved save', () => {
+  const now = Date.parse('2026-11-18T12:00:00Z');
+  assert.equal(timeAgo('2026-11-18T11:59:30Z', now), 'just now');
+  assert.equal(timeAgo('2026-11-18T11:55:00Z', now), '5 minutes ago');
+  assert.equal(timeAgo('2026-11-18T11:00:00Z', now), '1 hour ago');
+  assert.equal(timeAgo('2026-11-15T12:00:00Z', now), '3 days ago');
+  const one = [{ author: 'abucnasty', date: '2026-11-18T11:55:00Z', summary: 'x' }];
+  const two = [...one, { author: 'Ana', date: '2026-11-18T11:00:00Z', summary: 'y' }];
+  const saved = { ok: true as const, path: 'wiki/Guides/Basics.md', slug: 'basics', title: 'Basics', folder: 'Guides', blob: 'b', frontmatter: '', draft: false };
+  assert.equal(savedNotice(saved, now), undefined);
+  assert.equal(savedNotice({ ...saved, merged: { edits: one } }, now), "Your edit was combined with abucnasty's edit from 5 minutes ago.");
+  assert.equal(savedNotice({ ...saved, merged: { edits: two } }, now), 'Your edit was combined with 2 other edits.');
+  assert.equal(savedNotice({ ...saved, merged: { edits: [] } }, now), 'Your edit was combined with another edit.');
+  assert.equal(savedNotice({ ...saved, unchanged: true, merged: { edits: one } }, now), "The same changes were already made by abucnasty's edit from 5 minutes ago.");
+  assert.equal(
+    savedNotice({ ...saved, renamedFrom: 'wiki/Guides/Old.md', merged: { edits: one } }, now),
+    "This page was renamed to Basics while you were editing; your edit was saved there. Your edit was combined with abucnasty's edit from 5 minutes ago.",
+  );
+  assert.equal(otherEditors(one, now), 'abucnasty (5 minutes ago)');
 });
