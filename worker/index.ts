@@ -19,6 +19,7 @@ import type { ContentIndex } from '../src/content.ts';
 import contentIndex from '../src/generated/index.json';
 import { latestVideo } from './latestVideo.ts';
 import { createWikiApi, WIKI_API } from './wikiApi.ts';
+import type { BucBotApi } from './bucBot.ts';
 import { takeSaveSlot } from './rateLimitObject.ts';
 import type { TokenCache } from './github.ts';
 import {
@@ -34,8 +35,8 @@ import {
 } from './previews.ts';
 
 /**
- * Recent role checks, page histories, old versions and commit file lists (wikiApi.ts); a named
- * cache, never served to visitors.
+ * Page histories, old versions and commit file lists (wikiApi.ts); a named cache, never served to
+ * visitors.
  */
 const WIKI_ACCESS_CACHE = 'wiki-access';
 /** The GitHub App's installation token, reused by this isolate until shortly before it expires. */
@@ -56,7 +57,8 @@ export default {
     }
     if (url.pathname.startsWith(WIKI_API)) {
       const cache = await caches.open(WIKI_ACCESS_CACHE).catch(() => null);
-      return createWikiApi(env, {
+      // The binding's RPC methods are buc-bot's (bucBot.ts); its generated type is a plain Service.
+      return createWikiApi({ ...env, BUC_BOT: env.BUC_BOT as unknown as BucBotApi }, {
         fetch: (input, init) => fetch(input, init),
         cache,
         now: Date.now,

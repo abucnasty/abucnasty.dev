@@ -25,13 +25,14 @@
 //   6. A tree on main's tree, a commit (author: the editor's display name), then main moved to
 //      it without force. If main moved meanwhile (a commit elsewhere), step 3 runs again on the
 //      new head (merging if the page changed), up to MAX_ATTEMPTS times.
-//   7. The edit announced in WIKI_ANNOUNCE_CHANNEL_ID (published pages only); a failed
+//   7. The edit announced by buc-bot (BUC_BOT.announceWikiEdit; published pages only); a failed
 //      announcement is logged and never fails the save.
 // The vault's CI publishes the commit about a minute later.
 //
 // Everything outside Workers globals is passed in, so the flow is unit-tested under Node
 // (wikiSave.test.ts).
-import { announceEdit, type Fetch } from './discord.ts';
+import type { BucBotApi, WikiEdit } from './bucBot.ts';
+import type { Fetch } from './discord.ts';
 import { appConfigured, gitData, GitHubError, installationToken, type GitData, type GitHubAppConfig, type TokenCache, type TreeEntry } from './github.ts';
 import type { Slot } from './rateLimit.ts';
 import { mergeText, otherEdits, whereabouts, type OtherEdit } from './wikiMerge.ts';
@@ -74,8 +75,8 @@ export const MAX_ATTEMPTS = 3;
 
 export interface SaveEnv {
   SITE_URL: string;
-  WIKI_ANNOUNCE_CHANNEL_ID?: string;
-  DISCORD_BOT_TOKEN?: string;
+  /** buc-bot, which announces edits in the server (bucBot.ts). */
+  BUC_BOT?: Pick<BucBotApi, 'announceWikiEdit'>;
   /** "true" stops all saves (set in the Cloudflare dashboard; see README). */
   WIKI_READ_ONLY?: string;
   GITHUB_APP_ID?: string;
@@ -526,16 +527,16 @@ async function blobText(g: GitData, sha: string): Promise<string | null> {
   }
 }
 
-export async function announceSave(env: SaveEnv, deps: SaveDeps, edit: Parameters<typeof announceEdit>[1]['edit']): Promise<void> {
-  if (!env.DISCORD_BOT_TOKEN || !env.WIKI_ANNOUNCE_CHANNEL_ID) {
-    deps.log('wiki announce: DISCORD_BOT_TOKEN or WIKI_ANNOUNCE_CHANNEL_ID is not set');
+/** Announce an edit through buc-bot. Never throws: a failure is logged. */
+export async function announceSave(env: SaveEnv, deps: SaveDeps, edit: WikiEdit): Promise<void> {
+  if (!env.BUC_BOT) {
+    deps.log('wiki announce: the BUC_BOT binding is missing');
     return;
   }
   try {
-    const r = await announceEdit(deps.fetch, { botToken: env.DISCORD_BOT_TOKEN, channelId: env.WIKI_ANNOUNCE_CHANNEL_ID, edit });
+    const r = await env.BUC_BOT.announceWikiEdit(edit);
     if (!r.ok) deps.log(`wiki announce: ${r.reason}`);
   } catch (err) {
     deps.log(`wiki announce: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
-

@@ -7,6 +7,8 @@ import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import { takeSlot } from './rateLimit.ts';
 import { signSession, SESSION_COOKIE } from './session.ts';
+import type { WikiEdit } from './bucBot.ts';
+import { fakeBucBot } from './fakeBucBot.ts';
 import { createWikiApi, type WikiEnv } from './wikiApi.ts';
 import { mergeText } from './wikiMerge.ts';
 import { gitBlobSha } from './wikiSave.ts';
@@ -15,8 +17,6 @@ import { otherEditors, savedNotice, timeAgo } from '../src/wikiEditor/concurrent
 const SITE = 'https://abucnasty.dev';
 const SECRET = 's'.repeat(48);
 const GUILD = '1381752136450441266';
-const ROLE = '1572672305019101214';
-const CHANNEL = '1571207361769644142';
 const USER = '80351110224678912';
 const T0 = Date.UTC(2026, 10, 18, 12);
 const REPO = 'https://api.github.com/repos/abucnasty/factorio-vault';
@@ -144,20 +144,13 @@ async function vault() {
   return { blobs, commits, commit, github, beforeMove, writes, head: () => head, file: (p: string) => blobs.get(commits.get(head)!.files.get(p) ?? '') ?? null };
 }
 
-async function setup(o: { roles?: () => string[]; readOnly?: boolean } = {}) {
+async function setup(o: { editor?: () => boolean; readOnly?: boolean } = {}) {
   const v = await vault();
   const stamps: number[] = [];
-  const announced: any[] = [];
+  const announced: WikiEdit[] = [];
   const fetch = async (url: string, init: RequestInit = {}) => {
     const method = init.method ?? 'GET';
     const body = typeof init.body === 'string' ? JSON.parse(init.body) : undefined;
-    if (url === `https://discord.com/api/v10/guilds/${GUILD}/members/${USER}`) {
-      return Response.json({ roles: (o.roles ?? (() => [ROLE]))(), nick: 'Buc the Editor', avatar: null, user: { id: USER, username: 'buc', global_name: 'Buc', avatar: null } });
-    }
-    if (url === `https://discord.com/api/v10/channels/${CHANNEL}/messages`) {
-      announced.push(body);
-      return Response.json({ id: '1' });
-    }
     if (url === 'https://api.github.com/app/installations/2/access_tokens') return Response.json({ token: 't', expires_at: new Date(T0 + 3600_000).toISOString() }, { status: 201 });
     assert.ok(url.startsWith(REPO), url);
     return v.github(method, url.slice(REPO.length), body);
@@ -166,10 +159,8 @@ async function setup(o: { roles?: () => string[]; readOnly?: boolean } = {}) {
     SITE_URL: SITE,
     DISCORD_CLIENT_ID: '1572695514938613760',
     DISCORD_GUILD_ID: GUILD,
-    WIKI_EDITOR_ROLE_ID: ROLE,
-    WIKI_ANNOUNCE_CHANNEL_ID: CHANNEL,
     DISCORD_CLIENT_SECRET: 'client-secret-value',
-    DISCORD_BOT_TOKEN: 'bot-token-value',
+    BUC_BOT: fakeBucBot({ editor: o.editor, announce: (e) => (announced.push(e), { ok: true }) }, [], () => T0),
     WIKI_SESSION_SECRET: SECRET,
     WIKI_READ_ONLY: o.readOnly ? 'true' : undefined,
     GITHUB_APP_ID: '1',
@@ -403,11 +394,11 @@ test('concurrent edits: deleted meanwhile, 409 gone naming who; saved as a new p
 });
 
 test('concurrent edits: a lost role and the emergency stop still refuse before anything is read', async () => {
-  let roles = [ROLE];
-  const t = await setup({ roles: () => roles });
+  let editor = true;
+  const t = await setup({ editor: () => editor });
   const src = await t.open();
   await t.v.commit({ author: 'abucnasty', date: '2026-11-18T11:40:00Z', set: { [PAGE]: FM + replace(BODY, 'Intro line.', 'Intro, theirs.') } });
-  roles = [];
+  editor = false;
   const writes = t.v.writes.length;
   const lost = await t.save(t.edit(src, replace(BODY, 'Last line.', 'Last, mine.')));
   assert.equal(lost.status, 403);
