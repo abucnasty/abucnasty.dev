@@ -5,16 +5,18 @@ import { PageHeader } from '../components/PageHeader';
 import { DraftBanner, DraftChip, WikiFooter, WikiSignInNotice } from '../components/WikiAccess';
 import { WikiMarkdown } from '../components/WikiMarkdown';
 import { WikiLoadFailed, WikiLoading, WikiPageNotFound } from '../components/WikiStates';
-import { isEditor, useWikiSession, type WikiSession } from '../wikiAuth';
-import { savedPage, useSavedPages } from '../wikiSaved';
+import { editingOff, isEditor, useWikiSession, type WikiSession } from '../wikiAuth';
+import { movedTo, savedPage, useSavedPages, wasDeleted } from '../wikiSaved';
 import { layout } from '../layout';
 import {
   WIKI_ALL_ROUTE,
+  WIKI_DELETED_ROUTE,
   WIKI_HOME,
   findWikiAlias,
   findWikiPage,
   loadWikiMarkdown,
   useWikiIndex,
+  wikiHistoryRoute,
   wikiRoute,
   type WikiIndex,
   type WikiPageMeta,
@@ -23,21 +25,20 @@ import {
 // The editor (Milkdown, CodeMirror and the save flow) is its own chunk, fetched only when an
 // editor presses Edit or creates a page.
 const WikiEditor = lazy(() => import('../wikiEditor/WikiEditor'));
+// Rename and Delete, for editors: their own small chunk.
+const WikiPageActions = lazy(() => import('../components/WikiPageActions'));
 
 /** A new page asked for from the "New page" dialog (router state, so it survives a reload). */
 interface CreateState {
   create?: { title: string; folder: string };
+  /** What a rename tells the editor on the page's new address. */
+  notice?: string;
 }
-
-const EDITING_OFF: Record<string, string> = {
-  'read-only': 'Wiki editing is paused for now.',
-  unavailable: "Wiki editing isn't set up on the site yet.",
-};
 
 /** Edit, for wiki editors: disabled (with the reason) while saving is off. */
 function EditButton({ session, onClick }: { session: WikiSession; onClick: () => void }) {
   if (!isEditor(session) || session.status !== 'signed-in') return null;
-  const off = session.me.editing && session.me.editing !== 'on' ? EDITING_OFF[session.me.editing] : null;
+  const off = editingOff(session);
   const button = (
     <Button size="small" variant="outlined" onClick={onClick} disabled={!!off} data-wiki-edit>
       Edit
@@ -112,7 +113,7 @@ const allPagesButton = (
  */
 export function WikiPage() {
   const { slug: param } = useParams();
-  const { search, hash, state: routeState } = useLocation();
+  const { pathname, search, hash, state: routeState } = useLocation();
   const navigate = useNavigate();
   const slug = param ?? WIKI_HOME;
   const state = useWikiIndex();
@@ -125,6 +126,7 @@ export function WikiPage() {
   const index = useMemo(() => (state.index && saved ? withSaved(state.index, saved.meta, saved.files) : state.index), [state.index, saved]);
   const context = useMemo(() => (index && page ? { index, page } : null), [index, page]);
   const create = (routeState as CreateState | null)?.create;
+  const routeNotice = (routeState as CreateState | null)?.notice;
   const [editing, setEditing] = useState(false);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   useEffect(() => {
@@ -154,6 +156,24 @@ export function WikiPage() {
   );
 
   if (param === WIKI_HOME) return <Navigate to={`/wiki${search}${hash}`} replace />;
+  const renamed = movedTo(slug);
+  if (renamed) return <Navigate to={`${wikiRoute(renamed)}${search}${hash}`} replace />;
+  if (wasDeleted(slug)) {
+    return (
+      <Stack spacing={2}>
+        <Alert severity="success" data-wiki-deleted-notice>
+          Deleted. The site updates in about a minute. Wiki editors can restore it from Recently deleted for 90 days.
+        </Alert>
+        <Stack direction="row" spacing={1}>
+          <Button component={RouterLink} to={WIKI_DELETED_ROUTE} variant="outlined">
+            Recently deleted
+          </Button>
+          {allPagesButton}
+        </Stack>
+        <WikiFooter />
+      </Stack>
+    );
+  }
   if (state.status === 'loading') return <WikiLoading label="Loading the page" />;
   if (state.status === 'failed') return <WikiLoadFailed what="The wiki" onRetry={state.retry} />;
   if (!page || !context) {
@@ -192,11 +212,26 @@ export function WikiPage() {
         actions={
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
             {!editing && <EditButton session={session} onClick={() => (setSavedNotice(null), setEditing(true))} />}
+            {!editing && isEditor(session) && (
+              <Suspense fallback={null}>
+                <WikiPageActions index={index!} page={page} markdown={shown.status === 'ready' ? shown.markdown : null} off={editingOff(session)} />
+              </Suspense>
+            )}
+            {!editing && (
+              <Button component={RouterLink} to={wikiHistoryRoute(page.slug)} size="small" variant="text" data-wiki-history-link>
+                History
+              </Button>
+            )}
             {allPagesButton}
           </Stack>
         }
       />
       {page.draft && <DraftBanner />}
+      {routeNotice && !savedNotice && !editing && (
+        <Alert severity="success" onClose={() => navigate(`${pathname}${search}${hash}`, { replace: true, state: null })} data-wiki-saved>
+          {routeNotice}
+        </Alert>
+      )}
       {savedNotice && !editing && (
         <Alert severity="success" onClose={() => setSavedNotice(null)} data-wiki-saved>
           {savedNotice}

@@ -275,6 +275,11 @@ export function newPagePath(folder: string, title: string): string {
   return join(WIKI_ROOT, folder, `${title}.md`);
 }
 
+/** A page's file in the vault, from its folder and title (as the index lists them). */
+export function wikiPagePath(page: { folder: string; title: string }): string {
+  return newPagePath(page.folder, page.title);
+}
+
 /** Where an image added to a page goes: the _attachments folder beside the page. */
 export function attachmentPath(pagePath: string, name: string): string {
   return join(WIKI_ROOT, pageFolder(pagePath), WIKI_ATTACHMENTS, name);

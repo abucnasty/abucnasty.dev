@@ -71,6 +71,12 @@ export function useWikiSession(): WikiSession {
 
 export const isEditor = (s: WikiSession) => s.status === 'signed-in' && s.me.editor;
 
+/** Why changing pages is off now (editing paused or not set up), or null. */
+export function editingOff(session: WikiSession): string | null {
+  if (session.status !== 'signed-in' || !session.me.editing || session.me.editing === 'on') return null;
+  return session.me.editing === 'read-only' ? 'Wiki editing is paused for now.' : "Wiki editing isn't set up on the site yet.";
+}
+
 /** Where "Maintainer sign-in" goes: the Worker starts the Discord sign-in and returns to `returnTo`. */
 export function signInUrl(returnTo: string): string {
   return `/api/wiki/auth/login?return=${encodeURIComponent(returnTo)}`;

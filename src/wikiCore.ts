@@ -16,6 +16,8 @@ const WIKI_BASE = `${VAULT_ORIGIN}/wiki`;
 export const WIKI_HOME = 'home';
 /** The site's list of every page; no page may have this slug. */
 export const WIKI_ALL_ROUTE = '/wiki/all';
+/** Pages deleted in the last 90 days, for editors. */
+export const WIKI_DELETED_ROUTE = '/wiki/deleted';
 
 export interface WikiHeading {
   depth: number;
@@ -105,6 +107,11 @@ const titleKey = (title: string) => title.normalize('NFC').toLowerCase();
 /** Site route of a page: /wiki for the front page. */
 export function wikiRoute(slug: string): string {
   return slug === WIKI_HOME ? '/wiki' : `/wiki/${encodeURIComponent(slug)}`;
+}
+
+/** A page's history (/wiki/home/history for the front page). */
+export function wikiHistoryRoute(slug: string): string {
+  return `/wiki/${encodeURIComponent(slug)}/history`;
 }
 
 /** The drafts index, from the site's Worker: editors only (worker/wikiApi.ts). */

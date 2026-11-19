@@ -25,6 +25,16 @@ const WikiPage = lazy(() => {
   void loadWikiSession();
   return import('./pages/WikiPage').then((m) => ({ default: m.WikiPage }));
 });
+const WikiHistory = lazy(() => {
+  loadWikiIndex().catch(() => {});
+  void loadWikiSession();
+  return import('./pages/WikiHistory').then((m) => ({ default: m.WikiHistory }));
+});
+const WikiDeleted = lazy(() => {
+  loadWikiIndex().catch(() => {});
+  void loadWikiSession();
+  return import('./pages/WikiDeleted').then((m) => ({ default: m.WikiDeleted }));
+});
 const WikiAll = lazy(() => {
   loadWikiIndex().catch(() => {});
   void loadWikiSession();
@@ -77,7 +87,9 @@ export function App() {
           <Route path="/blog/:slug" element={<BlogPost />} />
           <Route path="/wiki" element={<WikiPage />} />
           <Route path="/wiki/all" element={<WikiAll />} />
+          <Route path="/wiki/deleted" element={<WikiDeleted />} />
           <Route path="/wiki/:slug" element={<WikiPage />} />
+          <Route path="/wiki/:slug/history" element={<WikiHistory />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>

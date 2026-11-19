@@ -20,3 +20,9 @@ export function formatBytes(bytes: number): string {
 export function formatSaveCount(n: number): string {
   return `${n} ${n === 1 ? 'save' : 'saves'}`;
 }
+
+/** A moment (ISO 8601) as a date and time in the reader's time zone, e.g. for a wiki edit. */
+export function editDate(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}

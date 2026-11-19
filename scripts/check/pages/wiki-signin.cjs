@@ -34,7 +34,7 @@ module.exports = {
     await goto(out, '/wiki/all');
     expect('signed out: /wiki/all lists no drafts', (await main(out).locator('[data-wiki-draft]').count()) === 0 && !(await main(out).innerText()).includes(draft.title));
     await goto(out, '/wiki/old-checklist');
-    expect("a draft's former title redirects nowhere", new URL(out.url()).pathname === '/wiki/old-checklist');
+    expect("signed out: a draft's former title redirects nowhere", new URL(out.url()).pathname === '/wiki/old-checklist');
     expect('signed out: the drafts are never requested', !wikiApiCalls(out).some((c) => c.includes('drafts/')), wikiApiCalls(out).join(', '));
 
     // Signed in without the role.
