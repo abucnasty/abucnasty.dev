@@ -3,7 +3,8 @@
 // pastes an image, switches modes, and saves (the request is checked: path, base blob, frontmatter
 // as loaded, body, image); a conflict keeps the text with "Copy my text"; switching modes without
 // changes keeps the text exactly; links edited, added and removed in visual mode; a new page from
-// /wiki/all, and one in a new folder; ```mermaid blocks drawn live in visual mode; phones. Then the
+// /wiki/all, and one in a new folder; ```mermaid blocks drawn live in visual mode; the style
+// picker (Text, Heading 1 to 4) and its shortcuts in both modes; phones. Then the
 // page history (readers: the list; editors: a diff and restore), rename, delete and recently
 // deleted, each request checked.
 const { FRONTMATTER } = require('../fixtures/wiki-api.cjs');
@@ -310,6 +311,80 @@ module.exports = {
       .replace('\n\n![64x64', '\n\n```mermaid\nflowchart LR\n  new1[New block] --> new2[Drawn]\n```\n\n![64x64');
     expect('save: the markdown is the source plus the edits, nothing from the preview', mermaidBody === expected, JSON.stringify(mermaidBody.slice(0, 600)) + ' vs ' + JSON.stringify(expected.slice(0, 600)));
 
+    // The style picker: it shows the style of the block at the cursor and sets it, from its menu or a
+    // shortcut (Ctrl+Alt+0 to 4), in both modes; in markdown a heading's `#` marker is replaced.
+    const sp = await open('/wiki/how-to-benchmark', 'desktop', { wiki: 'editor' });
+    await main(sp).locator('[data-wiki-edit]').click();
+    const spm = sp.locator('[data-wiki-visual-editor] .ProseMirror');
+    await spm.waitFor({ timeout: 10000 }).catch(() => {});
+    const styleButton = sp.locator('[data-wiki-style-picker]');
+    const shownStyle = async () => (await styleButton.innerText().catch(() => '')).trim();
+    // The editor takes a click's cursor from the browser a moment later.
+    const showsStyle = (label, p = sp) =>
+      p.waitForFunction((l) => document.querySelector('[data-wiki-style-picker]')?.innerText.trim() === l, label, { timeout: 3000 }).then(() => true, () => false);
+    const pickStyle = async (level) => {
+      await styleButton.click();
+      await sp.locator(`[data-wiki-style="${level}"]`).click();
+      await sp.locator('[role="menu"]').waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+    };
+    await spm.locator('h2', { hasText: 'Step 2.1' }).click();
+    expect('style picker: "Heading 2" on a ## heading (visual)', await showsStyle('Heading 2'), await shownStyle());
+    await spm.locator(':scope > p').first().click();
+    expect('style picker: "Text" in a paragraph', await showsStyle('Text'), await shownStyle());
+    await spm.locator('h2', { hasText: 'Step 2.1' }).click();
+    await showsStyle('Heading 2');
+    await styleButton.click();
+    const styleMenu = sp.locator('[role="menu"]');
+    await styleMenu.waitFor({ timeout: 5000 }).catch(() => {});
+    const menuText = await styleMenu.innerText().catch(() => '');
+    const sizes = await styleMenu.locator('[data-wiki-style] > span:first-child').evaluateAll((els) => els.map((e) => parseFloat(getComputedStyle(e).fontSize)));
+    expect(
+      'the style menu: Text, Heading 1 to 4, each with its markdown and shortcut, the current one marked, larger as the heading is',
+      /Text[\s\S]*Heading 1[\s\S]*#[\s\S]*Ctrl\+Alt\+1[\s\S]*Heading 4[\s\S]*####[\s\S]*Ctrl\+Alt\+4/.test(menuText) &&
+        (await styleMenu.locator('[data-wiki-style="2"].Mui-selected').count()) === 1 &&
+        sizes.length === 5 && sizes[1] > sizes[2] && sizes[2] > sizes[3] && sizes[3] > sizes[4] && sizes[4] >= sizes[0],
+      JSON.stringify({ menuText, sizes }),
+    );
+    await sp.waitForTimeout(300); // the menu's fade-in
+    await shot(sp, 'wiki-editor-style-menu-desktop');
+    await sp.locator('[data-wiki-style="3"]').click();
+    await styleMenu.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+    expect('visual: Heading 3 from the menu makes the block an h3', (await spm.locator('h3', { hasText: 'Step 2.1' }).count()) === 1 && (await spm.locator('h2', { hasText: 'Step 2.1' }).count()) === 0 && await showsStyle('Heading 3'), await shownStyle());
+    const pickerBox = await styleButton.boundingBox();
+    await spm.locator(':scope > p').first().click();
+    await sp.keyboard.press('Control+Alt+4');
+    const pickerBoxAfter = await styleButton.boundingBox();
+    expect('visual: Ctrl+Alt+4 makes the paragraph a Heading 4', (await spm.locator('h4', { hasText: 'This guide will walk' }).count()) === 1 && await showsStyle('Heading 4'), await shownStyle());
+    expect('the picker keeps its width as the style changes', pickerBox && pickerBoxAfter && pickerBox.width === pickerBoxAfter.width && pickerBox.x === pickerBoxAfter.x, JSON.stringify([pickerBox, pickerBoxAfter]));
+
+    await sp.getByRole('button', { name: 'Markdown' }).click();
+    await sp.locator('.cm-content').waitFor({ timeout: 10000 }).catch(() => {});
+    const cmLine = (re) => sp.locator('.cm-line', { hasText: re });
+    const spMd = await markdownText(sp);
+    expect('markdown mode: the visual changes as # markers', spMd.includes('\n### Step 2.1: Generate a Test Map\n') && spMd.startsWith('#### This guide will walk'), spMd.slice(0, 200));
+    expect('markdown mode: the picker reads the cursor line ("Heading 4" on ####)', await showsStyle('Heading 4'), await shownStyle());
+    await cmLine(/^## Prerequisites$/).click();
+    expect('markdown mode: "Heading 2" on a ## line', await showsStyle('Heading 2'), await shownStyle());
+    await pickStyle(3);
+    expect('markdown mode: Heading 3 replaces the ## marker', (await cmLine(/^### Prerequisites$/).count()) === 1 && !/#+ #/.test(await markdownText(sp)) && (await showsStyle('Heading 3')), (await markdownText(sp)).slice(0, 400));
+    await cmLine(/^#### This guide/).click();
+    await sp.keyboard.press('Control+Alt+1');
+    expect('markdown mode: Ctrl+Alt+1 makes the line "# "', (await cmLine(/^# This guide will walk/).count()) === 1 && (await showsStyle('Heading 1')), await shownStyle());
+    await pickStyle(0);
+    expect('markdown mode: Text removes the marker', (await cmLine(/^This guide will walk/).count()) === 1 && (await showsStyle('Text')), await shownStyle());
+    await cmLine(/^### Step 2\.1/).click();
+    await sp.keyboard.press('Control+Alt+0');
+    await sp.keyboard.press('Control+Alt+3');
+    expect('markdown mode: Ctrl+Alt+0 then Ctrl+Alt+3 on a heading line: ### once', (await cmLine(/^### Step 2\.1: Generate a Test Map$/).count()) === 1);
+    await sp.locator('[data-wiki-save]').click();
+    await sp.locator('[data-wiki-saved]').waitFor({ timeout: 5000 }).catch(() => {});
+    const styleBody = wikiApiCalls(sp).saves[0]?.meta?.body ?? '';
+    expect(
+      'save: ### for the headings set to Heading 3 in each mode, no stacked markers, the paragraph back to text',
+      styleBody.startsWith('This guide will walk') && styleBody.includes('\n### Prerequisites\n') && styleBody.includes('\n### Step 2.1: Generate a Test Map\n') && !/#+ #/.test(styleBody) && !/^##? /m.test(styleBody),
+      styleBody.slice(0, 600),
+    );
+
     // A new page from /wiki/all.
     const all = await open('/wiki/all', 'desktop', { wiki: 'editor' });
     await main(all).locator('[data-wiki-new]').click();
@@ -366,6 +441,9 @@ module.exports = {
     await phone.keyboard.type(' Typed on a phone.');
     const over = await phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect('phone: the editor types and has no sideways scroll', (await ppm.innerText()).includes('Typed on a phone.') && over <= 0, `overflow ${over}px`);
+    await ppm.locator('h2', { hasText: 'Prerequisites' }).click();
+    const phoneShort = await phone.waitForFunction(() => document.querySelector('[data-wiki-style-picker]')?.innerText.trim() === 'H2', null, { timeout: 3000 }).then(() => true, () => false);
+    expect('phone: the style picker shows a short label ("H2")', phoneShort, await phone.locator('[data-wiki-style-picker]').innerText().catch(() => ''));
     await shot(phone, 'wiki-editor-visual-phone');
 
     await historyAndPages({ open, goto, expect, shot, requests, wikiApiCalls });
