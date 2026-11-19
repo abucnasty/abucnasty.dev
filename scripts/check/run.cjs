@@ -53,7 +53,11 @@ const IGNORED_ERRORS = [
   },
   {
     match: 'status of 409',
-    why: 'the wiki-editor check has a save answer 409 on purpose to see the "changed since you opened it" state',
+    why: 'the wiki-editor check has saves answer 409 on purpose (a conflict to combine, a page deleted meanwhile, a taken title)',
+  },
+  {
+    match: 'status of 502',
+    why: 'the wiki-editor check has a save answer 502 on purpose to see a failed save keep the text with "Copy my text"',
   },
   {
     match: 'vault.abucnasty.dev/wiki/index.json',
