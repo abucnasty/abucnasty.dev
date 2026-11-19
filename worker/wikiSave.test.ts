@@ -36,7 +36,7 @@ interface Options {
   readOnly?: boolean;
   /** Answers of PATCH refs/heads/main in turn (true: moved; false: not a fast-forward). */
   refAnswers?: boolean[];
-  /** What main's page blob is after the first ref refusal. */
+  /** What main's page is after the first ref refusal. */
   pageAfterMove?: string;
   announce?: () => Response;
   key?: string;
@@ -50,11 +50,13 @@ async function setup(o: Options = {}) {
   let heads = ['head1'];
   const refAnswers = [...(o.refAnswers ?? [true])];
   const blobs = new Map<string, string>([[await sha(PAGE_TEXT), PAGE_TEXT]]);
+  const moved = o.pageAfterMove === undefined ? undefined : await sha(o.pageAfterMove);
+  if (o.pageAfterMove !== undefined) blobs.set(moved!, o.pageAfterMove);
   const listing = (head: string) => [
     { path: 'Home.md', type: 'blob', mode: '100644', sha: 'a'.repeat(40) },
     { path: 'Guides', type: 'tree', mode: '040000', sha: 'b'.repeat(40) },
     { path: 'Guides/_attachments', type: 'tree', mode: '040000', sha: 'c'.repeat(40) },
-    { path: 'Guides/How to Benchmark.md', type: 'blob', mode: '100644', sha: head === 'head1' ? blobs.keys().next().value : (o.pageAfterMove ?? blobs.keys().next().value) },
+    { path: 'Guides/How to Benchmark.md', type: 'blob', mode: '100644', sha: head === 'head1' ? blobs.keys().next().value : (moved ?? blobs.keys().next().value) },
   ];
   const json = (body: unknown, status = 200) => Response.json(body, { status });
   const fetch = async (url: string, init: RequestInit = {}) => {
@@ -78,7 +80,10 @@ async function setup(o: Options = {}) {
     if (path.startsWith('/git/commits/') && method === 'GET') return json({ tree: { sha: `root-${path.slice(13)}` } });
     if (path.startsWith('/git/trees/root-')) return json({ tree: [{ path: 'wiki', type: 'tree', mode: '040000', sha: `wiki-${path.slice(16)}` }] });
     if (path.startsWith('/git/trees/wiki-')) return json({ tree: listing(path.slice(16).split('?')[0]) });
-    if (path.startsWith('/git/blobs/') && method === 'GET') return json({ content: b64(blobs.get(path.slice(11)) ?? ''), encoding: 'base64' });
+    if (path.startsWith('/git/blobs/') && method === 'GET') {
+      const text = blobs.get(path.slice(11));
+      return text === undefined ? json({ message: 'Not Found' }, 404) : json({ content: b64(text), encoding: 'base64' });
+    }
     if (path === '/git/blobs') {
       const text = Buffer.from(body.content, 'base64').toString();
       const s = await sha(text);
@@ -196,18 +201,22 @@ test('save: re-checks the role, then blob, tree, commit and ref in order, as the
   assert.match(again.calls.find((c) => c.url.endsWith('/git/commits') && c.method === 'POST')!.body.message, /^Edited How to Benchmark\n\n/);
 });
 
-test('save: a page that changed since it was opened is refused with 409 and nothing is written', async () => {
+test('save: a page that changed since a version GitHub no longer has is a conflict (all of it), and nothing is written', async () => {
+  // Merging is tested in wikiMerge.test.ts.
   const t = await setup();
   const res = await t.save(await edit(undefined, { base: 'f'.repeat(40) }));
   assert.equal(res.status, 409);
   const out = await j(res);
   assert.equal(out.error, 'conflict');
-  assert.match(out.message, /changed since you opened it/);
+  assert.match(out.message, /changed the same part of this page/);
   assert.equal(out.current.blob, await base());
+  assert.equal(out.base.body, null);
+  assert.equal(out.theirs.body, '# How to benchmark\n\nOld text.\n');
+  assert.equal(out.mine.combined, '# How to benchmark\n\nNew text.\n');
   assert.ok(!t.github().some((c) => c.method !== 'GET' && !c.url.endsWith('access_tokens')), 'no writes');
 });
 
-test('save: when only main moved, the commit is made again on the new head; when the page moved too, 409', async () => {
+test('save: when only main moved, the commit is made again on the new head; when the page changed the same line too, 409', async () => {
   const t = await setup({ refAnswers: [false, true] });
   const res = await t.save(await edit());
   assert.equal(res.status, 200);
@@ -216,9 +225,10 @@ test('save: when only main moved, the commit is made again on the new head; when
   assert.equal(t.calls.filter((c) => c.url === `${REPO}/git/blobs`).length, 1, 'the blob is made once');
   assert.ok(t.logs.some((l) => /moved during the save/.test(l)));
 
-  const u = await setup({ refAnswers: [false], pageAfterMove: 'e'.repeat(40) });
+  const u = await setup({ refAnswers: [false], pageAfterMove: PAGE_TEXT.replace('Old text.', 'Other text.') });
   const res2 = await u.save(await edit());
   assert.equal(res2.status, 409);
+  assert.equal((await j(res2)).error, 'conflict');
   assert.equal(u.calls.filter((c) => c.url.endsWith('/git/refs/heads/main')).length, 1);
 
   // main moving on every try: MAX_ATTEMPTS tries, then a clear refusal.
@@ -263,7 +273,8 @@ test('save: size and rate limits', async () => {
   const limited = await t.save(await edit());
   assert.equal(limited.status, 429);
   assert.ok(Number(limited.headers.get('Retry-After')) > 0);
-  assert.equal(t.github().length, 0);
+  // The slot is taken just before the first write (so a conflict does not use one): read, nothing written.
+  assert.ok(!t.github().some((c) => c.method !== 'GET' && !c.url.endsWith('access_tokens')), 'nothing written');
   // The window slides: ten minutes after the oldest save a slot is free again.
   assert.equal(takeSlot(t.stamps, now + 10 * 60 * 1000 - (SAVE_LIMIT - 1) * 1000 + 1).slot.ok, true);
 });
