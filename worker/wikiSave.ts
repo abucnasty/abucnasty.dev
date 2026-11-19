@@ -29,6 +29,7 @@ import {
   attachmentPath,
   byteLength,
   composePage,
+  existingFolder,
   FrontmatterEditError,
   IMAGE_TYPES,
   isAttachmentName,
@@ -40,8 +41,10 @@ import {
   MAX_SUMMARY,
   newPagePath,
   pageFolder,
+  pageFolderProblem,
   pageTitle,
   splitPage,
+  tidyFolder,
   titleClash,
   titleProblem,
   WIKI_ROOT,
@@ -251,8 +254,9 @@ export async function save(env: SaveEnv, deps: SaveDeps, request: Request, edito
     if (typeof title !== 'string' || typeof folder !== 'string' || req.path !== undefined || req.base !== null) return bad('A new page needs a title and a folder.');
     const problem = titleProblem(title);
     if (problem) return bad(problem);
-    if (!isWikiFolder(folder)) return bad("That folder can't hold wiki pages.");
-    path = newPagePath(folder, title.normalize('NFC'));
+    if (!isWikiFolder(tidyFolder(folder))) return bad("That folder can't hold wiki pages.");
+    path = newPagePath(tidyFolder(folder), title.normalize('NFC'));
+    if (!isPagePath(path)) return bad('Pages can only be saved under wiki/.');
     if (req.frontmatter !== '') return bad('A new page starts without frontmatter.');
   } else {
     if (typeof req.path !== 'string' || !isPagePath(req.path)) return bad('Pages can only be saved under wiki/.');
@@ -320,9 +324,17 @@ export async function save(env: SaveEnv, deps: SaveDeps, request: Request, edito
       const { head, root, files } = await readWiki(g);
       const current = files.get(path);
       if (creating) {
-        if (current) return failure(409, 'exists', `A page called "${title}" was just created by someone else. Choose another title.`);
-        const folder = pageFolder(path);
-        if (folder !== '' && files.get(`${WIKI_ROOT}/${folder}`)?.type !== 'tree') return bad(`The folder "${folder}" isn't in the wiki.`);
+        // A folder that isn't there yet is made by this page; one that is takes the wiki's spelling.
+        const typed = pageFolder(path);
+        const folders = [...files].filter(([, e]) => e.type === 'tree').map(([p]) => p.slice(WIKI_ROOT.length + 1));
+        const folder = existingFolder(typed, folders);
+        const problem = pageFolderProblem(folder, folders);
+        if (problem) return bad(problem);
+        if (folder !== typed) {
+          path = newPagePath(folder, title);
+          for (const image of images) image.path = attachmentPath(path, image.name);
+        }
+        if (files.get(path)) return failure(409, 'exists', `A page called "${title}" was just created by someone else. Choose another title.`);
         const clash = titleClash(title, pagesIn(files).map(pageTitle));
         if (clash) return failure(409, 'exists', `There's already a page called "${clash}", which has the same title or address. Choose another title.`);
       } else if (!current) {

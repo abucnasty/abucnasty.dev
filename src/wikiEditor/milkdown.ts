@@ -10,7 +10,6 @@ import {
   createCodeBlockCommand,
   remarkPreserveEmptyLinePlugin,
   toggleEmphasisCommand,
-  toggleLinkCommand,
   toggleStrongCommand,
   turnIntoTextCommand,
   wrapInBlockquoteCommand,
@@ -24,6 +23,7 @@ import { Plugin, PluginKey, TextSelection } from '@milkdown/prose/state';
 import type { EditorView } from '@milkdown/prose/view';
 import { $node, $prose, $remark, callCommand } from '@milkdown/utils';
 import type { MarkdownNode } from '@milkdown/transformer';
+import { applyLink, linkTarget, removeLink, type LinkTarget } from './links';
 import { remarkWiki, wikiStringifyOptions } from './markdown';
 
 /** How the editor shows a wiki link or embed: supplied by the page (it knows the wiki index). */
@@ -141,6 +141,13 @@ function wikiNodes(lookup: WikiLookup) {
 
 const pickerKey = new PluginKey('wiki-picker');
 
+/** Take the browser's cursor as the editor's selection if it moved without the editor noticing. */
+function syncSelection(view: EditorView) {
+  if (view.isDestroyed || !view.hasFocus() || view.composing) return;
+  // ProseMirror's own DOM reader: it compares with the last selection it saw and only acts on a change.
+  (view as unknown as { domObserver?: { flush?: () => void } }).domObserver?.flush?.();
+}
+
 function hooks(callbacks: VisualCallbacks) {
   return $prose(
     () =>
@@ -174,6 +181,29 @@ function hooks(callbacks: VisualCallbacks) {
             callbacks.onImageFiles(files);
             return true;
           },
+          handleDOMEvents: {
+            // Before a key is handled, and after a click, the editor reads the cursor from the page.
+            // It normally learns of a moved cursor from the browser's selectionchange event, which
+            // Chromium stops sending after a dialog's text field had focus (the Link dialog): a
+            // click then left the cursor where it was and Enter split the old paragraph.
+            keydown(view) {
+              syncSelection(view);
+              return false;
+            },
+            mouseup(view) {
+              setTimeout(() => syncSelection(view), 0);
+              return false;
+            },
+            // A link in the text is edited, not followed: the click only places the cursor.
+            click(_view, event) {
+              if ((event.target as Element | null)?.closest?.('a[href]')) event.preventDefault();
+              return false;
+            },
+            auxclick(_view, event) {
+              if ((event.target as Element | null)?.closest?.('a[href]')) event.preventDefault();
+              return false;
+            },
+          },
           handleClickOn(view, _pos, node, nodePos, event) {
             // A task list item's box (drawn before its text) toggles it.
             if (node.type.name !== 'list_item' || node.attrs.checked == null) return false;
@@ -194,6 +224,10 @@ export interface VisualEditor {
   /** Insert at the cursor. */
   insertWikiLink(value: string): void;
   insertEmbed(value: string): void;
+  /** What the Link button acts on: the link at the cursor or selection, a selected wiki link, ... */
+  linkTarget(): LinkTarget;
+  /** Unlink the link at the cursor or selection, keeping its text. */
+  removeLink(): void;
   focus(): void;
   view(): EditorView;
   destroy(): void;
@@ -261,6 +295,13 @@ export async function createVisualEditor(root: HTMLElement, markdown: string, lo
     insertEmbed(value) {
       insertNode(type('wiki_embed').create({ value }));
     },
+    linkTarget: () => linkTarget(view().state),
+    removeLink() {
+      const v = view();
+      const tr = removeLink(v.state);
+      if (tr) v.dispatch(tr);
+      v.focus();
+    },
     run(a) {
       const call = (key: Parameters<typeof callCommand>[0], payload?: unknown) => action(callCommand(key as never, payload as never));
       switch (a.kind) {
@@ -318,11 +359,10 @@ export async function createVisualEditor(root: HTMLElement, markdown: string, lo
           call(insertTableCommand.key, { row: 3, col: 2 });
           break;
         case 'link': {
+          // Edits the link at the cursor (its whole extent), links a selection, or inserts a link.
           const v = view();
-          if (v.state.selection.empty) {
-            const mark = v.state.schema.marks.link.create({ href: a.href });
-            v.dispatch(v.state.tr.replaceSelectionWith(v.state.schema.text(a.text || a.href, [mark]), false));
-          } else call(toggleLinkCommand.key, { href: a.href });
+          const tr = applyLink(v.state, a.href, a.text);
+          if (tr) v.dispatch(tr);
           break;
         }
         case 'youtube': {
