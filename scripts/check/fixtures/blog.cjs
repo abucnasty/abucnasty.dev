@@ -47,7 +47,8 @@ const filler = 'Reducing the FPS cap leaves the game more time for each update, 
 
 /** Each post's markdown (index.md); relative links resolve against the post's folder. */
 const markdown = {
-  'hidden-post': `## Hidden\n\n${filler}\n`,
+  // A diagram (scripts/check/pages/mermaid.cjs).
+  'hidden-post': `## Hidden\n\n${filler}\n\n\`\`\`mermaid\nsequenceDiagram\n  Player->>Game: Limit FPS to 60\n  Game-->>Player: More UPS\n\`\`\`\n`,
   'fps-limit-impact-on-factorio-ups': `## The Question\n\nDoes limiting the FPS of the game have an impact on UPS?\n\n${filler}\n\n![Promethium Ship at 60 FPS](./screenshots/prom_ship_60.jpg)\n\n| Term | Description |\n| ---- | ----------- |\n| FPS | Frames Per Second |\n`,
   'ups-wars-utility-science-announcement': `## Overview\n\nThe community has voted that the next competition will be for Utility Science.\n\n${filler}\n`,
 };

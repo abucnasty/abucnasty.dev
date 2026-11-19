@@ -5,6 +5,8 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSlug from 'rehype-slug';
 import rehypeAutolinkHeadings from 'rehype-autolink-headings';
+import { mermaidSource } from '../markdownMermaid';
+import { MermaidDiagram } from './MermaidDiagram';
 
 interface MarkdownRendererProps {
   source: string;
@@ -97,6 +99,12 @@ export const markdownComponents: Components = {
   },
   p({ children }) {
     return <Typography component="p" variant="body1" sx={{ my: 2 }}>{children}</Typography>;
+  },
+  // A ```mermaid block is drawn as a diagram (as Obsidian and GitHub do); other code is as written.
+  pre({ node, children, ...rest }) {
+    const diagram = mermaidSource(node);
+    if (diagram !== undefined) return <MermaidDiagram source={diagram} />;
+    return <pre {...rest}>{children}</pre>;
   },
 };
 
