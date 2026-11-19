@@ -115,7 +115,7 @@ async function install(context, base, persona = 'signed-out') {
       const folder = meta.create ? meta.create.folder : meta.path.split('/').slice(1, -1).join('/');
       const slug = title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
       const images = Object.keys(form).filter((k) => k.startsWith('image:')).map((k) => ({ path: `wiki/${folder ? `${folder}/` : ''}_attachments/${k.slice(6)}`, oid: '0'.repeat(64) }));
-      return json(200, { ok: true, commit: '9'.repeat(40), path: meta.path ?? `wiki/${title}.md`, slug, title, folder, blob: '8'.repeat(40), frontmatter: meta.frontmatter, draft: meta.draft, created: !!meta.create, images });
+      return json(200, { ok: true, commit: '9'.repeat(40), path: meta.path ?? `wiki/${folder ? `${folder}/` : ''}${title}.md`, slug, title, folder, blob: '8'.repeat(40), frontmatter: meta.frontmatter, draft: meta.draft, created: !!meta.create, images });
     }
     return json(404, { error: 'not_found' });
   });

@@ -2,7 +2,8 @@
 // it; an editor opens it in place of the page (visual mode first), types, links a page with `[[`,
 // pastes an image, switches modes, and saves (the request is checked: path, base blob, frontmatter
 // as loaded, body, image); a conflict keeps the text with "Copy my text"; switching modes without
-// changes keeps the text exactly; a new page from /wiki/all; phones.
+// changes keeps the text exactly; links edited, added and removed in visual mode; a new page from
+// /wiki/all, and one in a new folder; phones.
 const { FRONTMATTER } = require('../fixtures/wiki-api.cjs');
 
 const EDITOR_CHUNK = /\/assets\/(WikiEditor|MarkdownEditor)-[^/]*\.js$/;
@@ -237,6 +238,29 @@ module.exports = {
     const created = wikiApiCalls(all).saves[0]?.meta;
     expect('new page: saved with its title and the top-level folder, from no blob', created && created.create && created.create.title === 'Check Page' && created.create.folder === '' && created.base === null && created.body.trim() === 'A brand new page.', JSON.stringify(created));
     expect('new page: shown at once after saving', (await main(all).innerText()).includes('A brand new page.'));
+
+    // A new page in a new folder: typed (nested with /), checked as typed, spelled like the
+    // existing folder it starts in ("guides" is "Guides"), and sent with the page.
+    const inFolder = await open('/wiki/all', 'desktop', { wiki: 'editor' });
+    await main(inFolder).locator('[data-wiki-new]').click();
+    await inFolder.locator('[data-wiki-new-title]').waitFor({ timeout: 5000 }).catch(() => {});
+    await inFolder.locator('[data-wiki-new-title]').fill('Linux Setup');
+    const folderInput = inFolder.locator('[data-wiki-new-folder]');
+    await folderInput.fill('Guides/_drafts');
+    const folderHelp = () => inFolder.locator('[data-wiki-new-page] .MuiFormHelperText-root').last().innerText();
+    expect('new folder: a name starting with _ is refused', (await inFolder.locator('[data-wiki-new-create]').isDisabled()) && /can't start with \. or _/.test(await folderHelp()), await folderHelp());
+    await folderInput.fill('guides/Linux');
+    expect('new folder: allowed, nested, in the existing folder\'s spelling', !(await inFolder.locator('[data-wiki-new-create]').isDisabled()) && (await folderHelp()) === 'A new folder: Guides / Linux', await folderHelp());
+    await inFolder.locator('[data-wiki-new-title]').click();
+    await inFolder.locator('[data-wiki-new-create]').click();
+    const fpm = inFolder.locator('[data-wiki-visual-editor] .ProseMirror');
+    await fpm.waitFor({ timeout: 10000 }).catch(() => {});
+    await fpm.click();
+    await inFolder.keyboard.type('A page in a new folder.');
+    await inFolder.locator('[data-wiki-save]').click();
+    await inFolder.locator('[data-wiki-saved]').waitFor({ timeout: 5000 }).catch(() => {});
+    const inFolderSave = wikiApiCalls(inFolder).saves[0]?.meta;
+    expect('new folder: the page is saved with its title in the new folder', inFolderSave && inFolderSave.create && inFolderSave.create.title === 'Linux Setup' && inFolderSave.create.folder === 'Guides/Linux', JSON.stringify(inFolderSave && inFolderSave.create));
 
     // A missing page offers to create it.
     await goto(all, '/wiki/a-page-nobody-wrote');

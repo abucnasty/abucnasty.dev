@@ -8,7 +8,7 @@ import { takeSlot, SAVE_LIMIT } from './rateLimit.ts';
 import { signSession, SESSION_COOKIE } from './session.ts';
 import { createWikiApi, type WikiEnv } from './wikiApi.ts';
 import { COMMIT_EMAIL, gitBlobSha, lfsKey, lfsPointer } from './wikiSave.ts';
-import { isDraft, splitPage, withDraft } from '../src/wikiSource.ts';
+import { existingFolder, folderProblem, isDraft, pageFolderProblem, splitPage, tidyFolder, withDraft } from '../src/wikiSource.ts';
 
 const SITE = 'https://abucnasty.dev';
 const SECRET = 's'.repeat(48);
@@ -289,6 +289,42 @@ test('save: writes only pages under wiki/ and images in the page folder\'s _atta
   const fake = await t.save(await edit(), { 'x.webp': enc.encode('<svg/>') });
   assert.equal(fake.status, 400);
   assert.ok(!t.github().some((c) => c.method !== 'GET' && !c.url.endsWith('access_tokens')), 'nothing written');
+});
+
+test('save: a new page in a folder that is not there yet makes it, spelled as the wiki spells its folders', async () => {
+  const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 4, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4]);
+  for (const [folder, dir] of [[' guides / Linux/ ', 'wiki/Guides/Linux'], ['Servers', 'wiki/Servers'], ['GUIDES', 'wiki/Guides']]) {
+    const t = await setup();
+    const res = await t.save({ create: { title: 'Linux Setup', folder }, base: null, frontmatter: '', body: '![[a-1a2b3c4d.webp]]\n', draft: false }, { 'a-1a2b3c4d.webp': webp });
+    const out = await j(res);
+    assert.equal(res.status, 200, JSON.stringify(out));
+    const tree = t.calls.find((c) => c.url === `${REPO}/git/trees` && c.method === 'POST')!.body.tree;
+    assert.deepEqual(tree.map((e: any) => e.path), [`${dir}/Linux Setup.md`, `${dir}/_attachments/a-1a2b3c4d.webp`], folder);
+    assert.deepEqual([out.path, out.folder], [`${dir}/Linux Setup.md`, dir.slice(5)]);
+  }
+  // A new folder keeps to the rules; never outside wiki/, never hidden or _ folders.
+  const t = await setup();
+  for (const folder of ['_drafts', 'Guides/_attachments', 'guides/_ATTACHMENTS', '.obsidian', 'Guides/../..', '../blog', 'a//b', 'a/./b', 'x:y', 'Guides/Linux.', 'a\\b', 'x'.repeat(101)]) {
+    const res = await t.save({ create: { title: 'Linux Setup', folder }, base: null, frontmatter: '', body: 'x\n', draft: false });
+    assert.equal(res.status, 400, folder);
+  }
+  assert.ok(!t.github().some((c) => c.method !== 'GET' && !c.url.endsWith('access_tokens')), 'nothing written');
+});
+
+test('folders: tidied, spelled as the wiki spells them, and checked when new', () => {
+  assert.equal(tidyFolder('  /Guides / Linux / '), 'Guides/Linux');
+  assert.equal(tidyFolder(' / '), '');
+  assert.equal(tidyFolder('a//b'), 'a//b');
+  const known = ['Guides', 'Guides/Arch Linux', 'Mods/_old/Things'];
+  assert.equal(existingFolder('guides/arch linux/x', known), 'Guides/Arch Linux/x');
+  assert.equal(existingFolder('MODS', known), 'Mods');
+  assert.equal(existingFolder('Other/guides', known), 'Other/guides');
+  for (const ok of ['', 'Guides', 'Guides/Linux', 'Guides/Linux/Arch', 'Ünïcode & Co', 'Mods/_old/New']) assert.equal(pageFolderProblem(ok, known), null, ok);
+  for (const bad of ['_drafts', 'Guides/_x', '.hidden', 'Guides/..', 'a//b', 'x:y', 'a#b', 'a%b', 'Guides/Linux.', 'Guides/_attachments', 'x'.repeat(101), `${'abcdefghi/'.repeat(20)}x`]) {
+    assert.ok(pageFolderProblem(bad, known), bad);
+  }
+  assert.match(folderProblem('a/_b')!, /can't start with \. or _/);
+  assert.equal(folderProblem('Guides/Linux'), null);
 });
 
 test('save: a new image goes to the LFS bucket under its sha256 and its pointer is committed with the page', async () => {

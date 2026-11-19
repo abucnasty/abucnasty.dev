@@ -176,6 +176,84 @@ export function isAttachmentPath(path: string): boolean {
 }
 
 // ---------------------------------------------------------------------------------------------
+// New folders
+
+/** Longest folder path (under wiki/) a new page may be put in. */
+export const MAX_FOLDER = 200;
+/** Characters a folder name may not hold: those a title may not, but for the "/" between folders. */
+const BAD_FOLDER = /[\\:*?"<>|#^[\]%\u0000-\u001f\u007f]/;
+
+/** A folder as typed, tidied: NFC, each name trimmed, no "/" at either end ("" is the top level). */
+export function tidyFolder(input: string): string {
+  const t = input.normalize('NFC').trim().replace(/^\/+|\/+$/g, '');
+  return t === '' ? '' : t.split('/').map((s) => s.trim()).join('/');
+}
+
+/**
+ * What is wrong with a new folder (tidied) for a page, in one sentence, or null. Git has no empty
+ * folders: a folder is made by the first page saved in it. The vault reads pages anywhere under
+ * wiki/ but in hidden and _attachments folders; new ones also keep to names that work as file
+ * names everywhere and never start with "_" (Obsidian's _attachments and the like).
+ */
+export function folderProblem(folder: string): string | null {
+  if (folder === '') return null;
+  if (folder.length > MAX_FOLDER) return `Keep the folder to ${MAX_FOLDER} characters.`;
+  for (const name of folder.split('/')) {
+    if (name === '') return "A folder name can't be empty: remove the extra /.";
+    if (name.startsWith('.') || name.startsWith('_')) return `"${name}": a folder can't start with . or _ (those never hold pages).`;
+    if (name.endsWith('.')) return `"${name}": a folder can't end with a dot.`;
+    if (name.length > MAX_TITLE) return `Keep each folder name to ${MAX_TITLE} characters.`;
+    if (BAD_FOLDER.test(name)) return 'A folder name can\'t contain \\ : * ? " < > | # ^ [ ] or %.';
+  }
+  return null;
+}
+
+/**
+ * `folder` spelled as the wiki already spells it: each leading part that names an existing folder
+ * ignoring case takes that folder's spelling (git folders are case-sensitive, so "guides" next to
+ * "Guides" would be a second folder).
+ */
+export function existingFolder(folder: string, known: Iterable<string>): string {
+  if (folder === '') return '';
+  const spelled = new Map<string, string>();
+  for (const path of withParents(known)) if (!spelled.has(path.toLowerCase())) spelled.set(path.toLowerCase(), path);
+  const parts = folder.split('/');
+  let out = '';
+  for (let i = 0; i < parts.length; i++) {
+    const path = out === '' ? parts[i] : `${out}/${parts[i]}`;
+    out = spelled.get(path.toLowerCase()) ?? path;
+  }
+  return out;
+}
+
+/** Every folder in `known` and the folders above them. */
+function withParents(known: Iterable<string>): Set<string> {
+  const all = new Set<string>();
+  for (const k of known) {
+    const parts = k.normalize('NFC').split('/');
+    for (let i = 1; i <= parts.length; i++) all.add(parts.slice(0, i).join('/'));
+  }
+  return all;
+}
+
+/**
+ * What is wrong with putting a new page in `folder` (tidied, and spelled as the wiki does: see
+ * existingFolder), given the wiki's folders, or null. A folder there already is fine; the part
+ * of it that is new must pass folderProblem.
+ */
+export function pageFolderProblem(folder: string, known: Iterable<string>): string | null {
+  if (folder === '') return null;
+  if (!isWikiFolder(folder)) return "That folder can't hold wiki pages.";
+  const there = withParents(known);
+  const parts = folder.split('/');
+  let have = parts.length;
+  while (have > 0 && !there.has(parts.slice(0, have).join('/'))) have--;
+  if (have === parts.length) return null;
+  if (folder.length > MAX_FOLDER) return `Keep the folder to ${MAX_FOLDER} characters.`;
+  return folderProblem(parts.slice(have).join('/'));
+}
+
+// ---------------------------------------------------------------------------------------------
 // New page titles
 
 /** Characters a title may not hold: they break file names on some systems or links in Obsidian. */
