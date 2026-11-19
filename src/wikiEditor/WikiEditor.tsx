@@ -220,8 +220,17 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
   const [notice, setNotice] = useState<string | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [picker, setPicker] = useState<{ left: number; top: number; bottom: number } | null>(null);
-  const [ask, setAsk] = useState<null | 'link' | 'youtube'>(null);
+  const [picker, setPicker] = useState<PickerAt | null>(null);
+  const [ask, setAsk] = useState<Ask | null>(null);
+  /**
+   * What the dialog's answer does, run as it starts to close (its focus trap is off by then, and
+   * its fields are still on the page). The dialog does not hand focus back itself: that puts the
+   * browser's cursor at the top of the page, which the visual editor then takes as its selection.
+   * Focusing the editor after the dialog's fields are gone has Chromium stop reporting selection
+   * changes, so clicks in the text no longer move the editor's cursor. The editor puts its own
+   * cursor back when it is focused.
+   */
+  const afterAsk = useRef<(() => void) | null>(null);
   const [headingMenu, setHeadingMenu] = useState<HTMLElement | null>(null);
   const [calloutMenu, setCalloutMenu] = useState<HTMLElement | null>(null);
 
@@ -342,12 +351,36 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
     if (mode === 'markdown') return;
     const v = visual.current;
     if (!v) return;
+    // Replacing a selected wiki link: the new one takes its place; cancelled, it stays as it was.
     if (value && value.trim() !== '') v.insertWikiLink(value.trim());
+    else if (at.replace !== undefined) v.focus();
     else {
       // Cancelled: put back what was typed.
       const view = v.view();
       view.dispatch(view.state.tr.insertText('[['));
       view.focus();
+    }
+  };
+
+  /**
+   * The Link button. In visual mode it edits the link at the cursor or selection (the dialog shows
+   * its address and text, with "Remove link"), and on a selected wiki link opens the page picker
+   * to replace it.
+   */
+  const openLink = () => {
+    const v = mode === 'visual' ? visual.current : null;
+    if (!v) {
+      setAsk({ kind: 'link', url: '', text: '', textField: 'insert', editing: false });
+      return;
+    }
+    const t = v.linkTarget();
+    if (t.kind === 'wiki') {
+      const c = v.view().coordsAtPos(t.pos);
+      setPicker({ left: c.left, top: c.top, bottom: c.bottom, replace: t.value });
+    } else if (t.kind === 'link') {
+      setAsk({ kind: 'link', url: t.href, text: t.text ?? '', textField: t.text === null ? 'none' : 'edit', editing: true });
+    } else {
+      setAsk({ kind: 'link', url: '', text: '', textField: t.kind === 'selection' ? 'none' : 'insert', editing: false });
     }
   };
 
@@ -457,7 +490,7 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
         {tool('Italic', <FormatItalic fontSize="small" />, () => act({ kind: 'italic' }), `${mod}I`)}
         {tool('Strikethrough', <StrikethroughS fontSize="small" />, () => act({ kind: 'strike' }))}
         <Divider orientation="vertical" flexItem />
-        {tool('Link', <LinkIcon fontSize="small" />, () => setAsk('link'))}
+        {tool('Link', <LinkIcon fontSize="small" />, openLink)}
         <Tooltip title="Wiki link (type [[)">
           <Button size="small" sx={{ minWidth: 0, px: 0.75, fontFamily: 'monospace' }} aria-label="Wiki link" onMouseDown={(e) => e.preventDefault()} onClick={() => act({ kind: 'wikiLink' })}>
             [[ ]]
@@ -483,7 +516,7 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
         {tool('Code block', <Code fontSize="small" />, () => act({ kind: 'code' }))}
         {tool('Table', <TableChart fontSize="small" />, () => act({ kind: 'table' }))}
         {tool('Image', <ImageIcon fontSize="small" />, () => fileInput.current?.click())}
-        {tool('YouTube video', <YouTube fontSize="small" />, () => setAsk('youtube'))}
+        {tool('YouTube video', <YouTube fontSize="small" />, () => setAsk({ kind: 'youtube', url: '', text: '', textField: 'none', editing: false }))}
         <input
           ref={fileInput}
           type="file"
@@ -595,20 +628,42 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
 
       <PagePicker at={picker} titles={titles} onPick={pickPage} />
       <AskDialog
-        kind={ask}
+        ask={ask}
         onClose={() => setAsk(null)}
         onDone={(url, label) => {
+          afterAsk.current = ask?.kind === 'youtube' ? () => act({ kind: 'youtube', url }) : () => act({ kind: 'link', href: url, text: label });
           setAsk(null);
-          if (ask === 'youtube') act({ kind: 'youtube', url });
-          else act({ kind: 'link', href: url, text: label });
+        }}
+        onRemove={() => {
+          afterAsk.current = () => visual.current?.removeLink();
+          setAsk(null);
+        }}
+        onClosing={() => {
+          const run = afterAsk.current;
+          afterAsk.current = null;
+          if (run) run();
+          else if (mode === 'visual') visual.current?.focus();
         }}
       />
     </Stack>
   );
 }
 
+/** Where the page picker opens; `replace` is the selected wiki link's value it replaces. */
+type PickerAt = { left: number; top: number; bottom: number; replace?: string };
+
+/** The URL dialog: a new link or video, or (editing) the link at the cursor. */
+type Ask = {
+  kind: 'link' | 'youtube';
+  url: string;
+  text: string;
+  /** The link text field: for new linked text, for the edited link's text, or none (a selection). */
+  textField: 'insert' | 'edit' | 'none';
+  editing: boolean;
+};
+
 /** The page picker `[[` opens in the visual editor: published pages and drafts, or any title typed. */
-function PagePicker({ at, titles, onPick }: { at: { left: number; top: number; bottom: number } | null; titles: () => string[]; onPick: (value: string | null) => void }) {
+function PagePicker({ at, titles, onPick }: { at: PickerAt | null; titles: () => string[]; onPick: (value: string | null) => void }) {
   const anchor = useMemo(
     () => (at ? { getBoundingClientRect: () => new DOMRect(at.left, at.top, 0, at.bottom - at.top) } : null),
     [at],
@@ -617,7 +672,7 @@ function PagePicker({ at, titles, onPick }: { at: { left: number; top: number; b
   // Choosing closes the list too: answer once.
   const answered = useRef(false);
   useEffect(() => {
-    setInput('');
+    setInput(at?.replace ?? '');
     answered.current = false;
   }, [at]);
   const pick = (value: string | null) => {
@@ -648,17 +703,31 @@ function PagePicker({ at, titles, onPick }: { at: { left: number; top: number; b
   );
 }
 
-function AskDialog({ kind, onClose, onDone }: { kind: null | 'link' | 'youtube'; onClose: () => void; onDone: (url: string, label: string) => void }) {
+function AskDialog({
+  ask,
+  onClose,
+  onDone,
+  onRemove,
+  onClosing,
+}: {
+  ask: Ask | null;
+  onClose: () => void;
+  onDone: (url: string, label: string) => void;
+  onRemove: () => void;
+  /** The dialog starts to close (answered or cancelled). */
+  onClosing: () => void;
+}) {
   const [url, setUrl] = useState('');
   const [label, setLabel] = useState('');
   useEffect(() => {
-    setUrl('');
-    setLabel('');
-  }, [kind]);
+    setUrl(ask?.url ?? '');
+    setLabel(ask?.text ?? '');
+  }, [ask]);
+  const kind = ask?.kind;
   const valid = kind === 'youtube' ? !!youtubeVideo(url) : /^(https?:\/\/|mailto:|\/|#)\S+$/i.test(url.trim());
   return (
-    <Dialog open={!!kind} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>{kind === 'youtube' ? 'YouTube video' : 'Link'}</DialogTitle>
+    <Dialog open={!!ask} onClose={onClose} fullWidth maxWidth="xs" disableRestoreFocus slotProps={{ paper: { ...({ 'data-wiki-link-dialog': kind ?? '' } as object) }, transition: { onExit: onClosing } }}>
+      <DialogTitle>{kind === 'youtube' ? 'YouTube video' : ask?.editing ? 'Edit link' : 'Link'}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
           <TextField
@@ -668,14 +737,27 @@ function AskDialog({ kind, onClose, onDone }: { kind: null | 'link' | 'youtube';
             onChange={(e) => setUrl(e.target.value)}
             error={url !== '' && !valid}
             helperText={url !== '' && !valid ? (kind === 'youtube' ? 'A youtube.com or youtu.be link.' : 'A full address, starting with https://.') : ' '}
+            slotProps={{ htmlInput: { 'data-wiki-link-url': '' } }}
           />
-          {kind === 'link' && <TextField label="Text (if nothing is selected)" value={label} onChange={(e) => setLabel(e.target.value)} />}
+          {kind === 'link' && ask?.textField !== 'none' && (
+            <TextField
+              label={ask?.textField === 'edit' ? 'Text' : 'Text (if nothing is selected)'}
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              slotProps={{ htmlInput: { 'data-wiki-link-text': '' } }}
+            />
+          )}
         </Stack>
       </DialogContent>
       <DialogActions>
+        {ask?.editing && (
+          <Button color="error" onClick={onRemove} sx={{ mr: 'auto' }} data-wiki-link-remove>
+            Remove link
+          </Button>
+        )}
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" disabled={!valid} onClick={() => onDone(url.trim(), label.trim())}>
-          Insert
+        <Button variant="contained" disabled={!valid} onClick={() => onDone(url.trim(), label.trim())} data-wiki-link-done>
+          {ask?.editing ? 'Save' : 'Insert'}
         </Button>
       </DialogActions>
     </Dialog>

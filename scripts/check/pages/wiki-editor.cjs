@@ -152,6 +152,72 @@ module.exports = {
     expect('"Copy my text" copies the page as markdown', clip.includes('Conflicting words.') && clip.includes('[!warning]'), clip.slice(-100));
     await shot(conflict, 'wiki-editor-conflict-desktop');
 
+    // Links in visual mode: a click places the cursor (never follows the link); the Link button edits
+    // the link at the cursor (its address and text shown), links a selection, and removes a link.
+    const lp = await open('/wiki/how-to-benchmark', 'desktop', { wiki: 'editor' });
+    await main(lp).locator('[data-wiki-edit]').click();
+    const lpm = lp.locator('[data-wiki-visual-editor] .ProseMirror');
+    await lpm.waitFor({ timeout: 10000 }).catch(() => {});
+    const before = lp.url();
+    await lpm.locator('a', { hasText: 'Do not click' }).click({ position: { x: 20, y: 5 } });
+    await lp.waitForTimeout(300);
+    const inLink = await lp.evaluate(() => !!window.getSelection()?.anchorNode?.parentElement?.closest('.ProseMirror a'));
+    expect('a click on a link in the editor stays in the editor, with the cursor in the link', lp.url() === before && (await lp.locator('[data-wiki-editor]').count()) === 1 && inLink);
+    const linkButton = lp.getByRole('button', { name: 'Link', exact: true });
+    await linkButton.click();
+    const dialog = lp.locator('[data-wiki-link-dialog="link"]');
+    // Closed, after its fade.
+    const dialogGone = () => lp.locator('.MuiDialog-root').waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+    await dialog.waitFor({ timeout: 5000 }).catch(() => {});
+    const shownUrl = await dialog.locator('[data-wiki-link-url]').inputValue().catch(() => null);
+    const shownText = await dialog.locator('[data-wiki-link-text]').inputValue().catch(() => null);
+    expect('Link in a link: the dialog shows its address and text, with "Remove link"', shownUrl === 'javascript:alert(1)' && shownText === 'Do not click' && (await dialog.locator('[data-wiki-link-remove]').count()) === 1, JSON.stringify({ shownUrl, shownText }));
+    await dialog.locator('[data-wiki-link-url]').fill('https://example.com/new');
+    await dialog.locator('[data-wiki-link-done]').click();
+    await dialogGone();
+    expect('the edited link keeps its text and gets the new address', (await lpm.locator('a[href="https://example.com/new"]', { hasText: 'Do not click' }).count()) === 1 && (await lpm.locator('a', { hasText: 'Do not click' }).count()) === 1);
+    // After the dialog, a click still moves the cursor: Enter and typing land at the end.
+    await toEnd(lpm, lp);
+    await lp.keyboard.press('Enter');
+    await lp.keyboard.type('Linked then unlinked');
+    expect('after the dialog, clicks move the cursor (the new paragraph is the last)', ((await lpm.locator(':scope > p').last().innerText()) === 'Linked then unlinked'));
+    // A selection without a link gets one; then Remove link takes it off again, keeping the text.
+    await lp.keyboard.press('Shift+Home');
+    await linkButton.click();
+    await dialog.waitFor({ timeout: 5000 }).catch(() => {});
+    expect('Link on a selection: an empty address, no text field', (await dialog.locator('[data-wiki-link-url]').inputValue()) === '' && (await dialog.locator('[data-wiki-link-text]').count()) === 0);
+    await dialog.locator('[data-wiki-link-url]').fill('https://example.com/remove');
+    await dialog.locator('[data-wiki-link-done]').click();
+    await dialogGone();
+    const added = lpm.locator('a[href="https://example.com/remove"]');
+    expect('the selection is linked', (await added.innerText().catch(() => '')) === 'Linked then unlinked');
+    await added.click({ position: { x: 30, y: 5 } });
+    await linkButton.click();
+    await dialog.waitFor({ timeout: 5000 }).catch(() => {});
+    await dialog.locator('[data-wiki-link-remove]').click();
+    await dialogGone();
+    expect('Remove link leaves the text', (await added.count()) === 0 && (await lpm.innerText()).includes('Linked then unlinked'));
+    // A selected wiki link: Link opens the page picker on it; Escape leaves it as it was.
+    const wikiNode = lpm.locator('.wiki-link-node').last();
+    const wikiValue = await wikiNode.getAttribute('data-value');
+    await wikiNode.click();
+    await linkButton.click();
+    const lpicker = lp.locator('[data-wiki-page-picker] input');
+    await lpicker.waitFor({ timeout: 5000 }).catch(() => {});
+    expect('Link on a wiki link opens the page picker with its value', (await lpicker.inputValue().catch(() => null)) === wikiValue, wikiValue);
+    await lp.keyboard.press('Escape');
+    await lp.locator('[data-wiki-page-picker]').waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+    expect('cancelled: the wiki link is unchanged', (await lpm.locator(`.wiki-link-node[data-value="${wikiValue}"]`).count()) === 1 && !(await lpm.innerText()).includes('[['));
+    await lp.locator('[data-wiki-summary]').fill('Edit a link');
+    await lp.locator('[data-wiki-save]').click();
+    await lp.locator('[data-wiki-saved]').waitFor({ timeout: 5000 }).catch(() => {});
+    const linkBody = wikiApiCalls(lp).saves[0]?.meta?.body ?? '';
+    expect(
+      'save: the edited link has the new address and the same text; the removed link is plain text',
+      linkBody.includes('[Do not click](https://example.com/new)') && !linkBody.includes('javascript:') && /\nLinked then unlinked\n?$/.test(linkBody) && linkBody.includes(`[[${wikiValue}]]`),
+      linkBody.slice(-200),
+    );
+
     // A new page from /wiki/all.
     const all = await open('/wiki/all', 'desktop', { wiki: 'editor' });
     await main(all).locator('[data-wiki-new]').click();
