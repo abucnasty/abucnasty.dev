@@ -8,8 +8,14 @@
 //   'check-failed'  signed in, but Discord could not be asked (503)
 //
 // Editors also get the editor's calls: `source?slug=` (a page's file, frontmatter included, built
-// from the wiki fixture) and `save` (recorded, multipart body and all, in `asked.saves`; a save
-// whose summary is "force conflict" is answered 409 as when the page changed meanwhile).
+// from the wiki fixture) and `save` (recorded, multipart body and all, in `asked.saves`). Edits
+// made by someone else meanwhile are stood in for by the save's summary:
+//   "force merge"     combined with abucnasty's edit from 5 minutes ago (THEIRS_HEADING), saved;
+//                     `source` then gives the combined page
+//   "force conflict"  409 conflict: Other Editor changed the last line too (theirsVersion), unless
+//                     the save is already against their version (the combined save)
+//   "force gone"      409 gone: abucnasty deleted the page 5 minutes ago
+// A new page whose title is a page's in the wiki fixture is answered 409 exists.
 // Sign-out and "I understand" change the persona for the rest of the context, as the cookies would.
 //
 // History: `history?path=` (anyone for a published page, editors for a draft; How to Benchmark has
@@ -22,6 +28,16 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 
 /** The frontmatter the editor must send back untouched. */
 const FRONTMATTER = '---\naliases: [Benchmarking Guide]\n---\n\n';
+
+/** The other edit's change that overlaps nothing (a heading), and the line both change. */
+const THEIRS_HEADING = ['## Prerequisites', '## Before you start'];
+const LAST_LINE = 'See [[Setting Up Arch to Run Factorio#Prerequisites|the Arch prerequisites]].';
+const THEIRS_LAST = 'See [[Setting Up Arch to Run Factorio#Prerequisites|the Arch prerequisites]], updated in Obsidian.';
+/** How to Benchmark as the other edit left it. */
+const theirsVersion = (body) => body.replace(THEIRS_HEADING[0], THEIRS_HEADING[1]).replace(LAST_LINE, THEIRS_LAST);
+const THEIR_BLOB = 'e'.repeat(40);
+const THEIR_HEAD = 'd'.repeat(40);
+const minutesAgo = (n) => new Date(Date.now() - n * 60 * 1000).toISOString();
 
 /** The parts of a multipart/form-data body: name → { filename, text, size }. */
 function parts(req) {
@@ -86,6 +102,8 @@ async function install(context, base, persona = 'signed-out') {
   const asked = [];
   asked.saves = [];
   asked.changes = [];
+  /** Pages combined with another edit by a save: the source gives them afterwards. */
+  const combined = new Map();
   await context.route(`${base}/api/wiki/**`, (route) => {
     const req = route.request();
     const path = new URL(req.url()).pathname.slice('/api/wiki/'.length);
@@ -130,7 +148,7 @@ async function install(context, base, persona = 'signed-out') {
         blob: page.blob,
         head: 'f'.repeat(40),
         frontmatter: slug === 'how-to-benchmark' ? FRONTMATTER : '',
-        body: markdown[slug],
+        body: combined.get(slug) ?? markdown[slug],
         draft: false,
       });
     }
@@ -175,18 +193,41 @@ async function install(context, base, persona = 'signed-out') {
       const form = parts(req);
       const meta = JSON.parse(form.save?.text ?? '{}');
       asked.saves.push({ meta, parts: form, headers: req.headers() });
-      if (meta.summary === 'force conflict') {
-        return json(409, { error: 'conflict', message: 'This page changed since you opened it. Copy your text, open the page again and add your changes to the new version.', current: { blob: 'e'.repeat(40) } });
-      }
       const title = meta.create ? meta.create.title : /([^/]+)\.md$/.exec(meta.path)[1];
       const folder = meta.create ? meta.create.folder : meta.path.split('/').slice(1, -1).join('/');
       const slug = title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
+      if (meta.path && meta.summary === 'force conflict' && meta.base !== THEIR_BLOB) {
+        const base = combined.get(slug) ?? markdown[slug];
+        return json(409, {
+          error: 'conflict',
+          message: 'Other Editor changed the same part of this page while you were editing. Choose what to keep, then save the combined version.',
+          current: { blob: THEIR_BLOB },
+          path: meta.path,
+          title,
+          folder,
+          base: { blob: meta.base, body: base },
+          theirs: { blob: THEIR_BLOB, head: THEIR_HEAD, frontmatter: meta.frontmatter, body: theirsVersion(base), draft: false, edits: [{ author: 'Other Editor', date: minutesAgo(5), summary: 'Update the Arch link' }] },
+          mine: { body: meta.body, combined: meta.body.replace(THEIRS_HEADING[0], THEIRS_HEADING[1]) },
+        });
+      }
+      if (meta.path && meta.summary === 'force gone') {
+        return json(409, { error: 'gone', message: 'abucnasty deleted this page while you were editing.', current: null, deleted: { author: 'abucnasty', date: minutesAgo(5), summary: 'sync edits from obsidian' }, path: meta.path, title, folder });
+      }
+      if (meta.create && index.pages.some((p) => p.title.toLowerCase() === title.toLowerCase())) {
+        return json(409, { error: 'exists', message: `There's already a page called "${title}", which has the same title or address. Choose another title.` });
+      }
+      let extra = {};
+      if (meta.path && meta.summary === 'force merge') {
+        const body = meta.body.replace(THEIRS_HEADING[0], THEIRS_HEADING[1]);
+        combined.set(slug, body);
+        extra = { body, merged: { edits: [{ author: 'abucnasty', date: minutesAgo(5), summary: 'sync edits from obsidian' }] } };
+      }
       const images = Object.keys(form).filter((k) => k.startsWith('image:')).map((k) => ({ path: `wiki/${folder ? `${folder}/` : ''}_attachments/${k.slice(6)}`, oid: '0'.repeat(64) }));
-      return json(200, { ok: true, commit: '9'.repeat(40), path: meta.path ?? `wiki/${folder ? `${folder}/` : ''}${title}.md`, slug, title, folder, blob: '8'.repeat(40), frontmatter: meta.frontmatter, draft: meta.draft, created: !!meta.create, images });
+      return json(200, { ok: true, commit: '9'.repeat(40), path: meta.path ?? `wiki/${folder ? `${folder}/` : ''}${title}.md`, slug, title, folder, blob: '8'.repeat(40), frontmatter: meta.frontmatter, draft: meta.draft, created: !!meta.create, images, ...extra });
     }
     return json(404, { error: 'not_found' });
   });
   return asked;
 }
 
-module.exports = { install, USER, FRONTMATTER };
+module.exports = { install, USER, FRONTMATTER, theirsVersion, THEIRS_LAST, THEIR_BLOB, THEIR_HEAD };

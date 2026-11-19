@@ -1,14 +1,15 @@
 // The wiki editor, against the wiki API stand-in (fixtures/wiki-api.cjs): readers never download
 // it; an editor opens it in place of the page (visual mode first), types, links a page with `[[`,
 // pastes an image, switches modes, and saves (the request is checked: path, base blob, frontmatter
-// as loaded, body, image); a conflict keeps the text with "Copy my text"; switching modes without
+// as loaded, body, image); edits made at the same time (combined, side by side, deleted
+// meanwhile; "Copy my text" on a failed save); switching modes without
 // changes keeps the text exactly; links edited, added and removed in visual mode; a new page from
 // /wiki/all, and one in a new folder; ```mermaid blocks drawn live in visual mode; the style
 // picker (Text, Heading 1 to 4) and its shortcuts in both modes; phones. Then the
 // page history (readers: the list; editors: a diff and restore), rename, delete and recently
 // deleted, each request checked.
-const { FRONTMATTER } = require('../fixtures/wiki-api.cjs');
-const { MERMAID } = require('../fixtures/wiki.cjs');
+const { FRONTMATTER, theirsVersion, THEIRS_LAST, THEIR_BLOB, THEIR_HEAD } = require('../fixtures/wiki-api.cjs');
+const { MERMAID, markdown: FIXTURE_MARKDOWN } = require('../fixtures/wiki.cjs');
 
 const EDITOR_CHUNK = /\/assets\/(WikiEditor|MarkdownEditor)-[^/]*\.js$/;
 const MERMAID_CHUNK = /\/assets\/mermaid-[\w-]+\.js$/;
@@ -141,22 +142,8 @@ module.exports = {
     await same.locator('[data-wiki-editor]').waitFor({ timeout: 10000 }).catch(() => {});
     expect('the next edit opens in the last mode used (visual)', (await same.locator('[data-wiki-editor]').getAttribute('data-mode')) === 'visual');
 
-    // A conflict: the text stays, with the reason and "Copy my text".
-    const conflict = await open('/wiki/how-to-benchmark', 'desktop', { wiki: 'editor' });
-    await main(conflict).locator('[data-wiki-edit]').click();
-    const cpm = conflict.locator('[data-wiki-visual-editor] .ProseMirror');
-    await cpm.waitFor({ timeout: 10000 }).catch(() => {});
-    await toEnd(cpm, conflict);
-    await conflict.keyboard.type(' Conflicting words.');
-    await conflict.locator('[data-wiki-summary]').fill('force conflict');
-    await conflict.locator('[data-wiki-save]').click();
-    const err = conflict.locator('[data-wiki-save-error="conflict"]');
-    await err.waitFor({ timeout: 5000 }).catch(() => {});
-    expect('409: "changed since you opened it", text kept, "Copy my text"', /changed since you opened it/.test(await err.innerText().catch(() => '')) && (await cpm.innerText()).includes('Conflicting words.') && (await err.getByRole('button', { name: 'Copy my text' }).count()) === 1);
-    await err.getByRole('button', { name: 'Copy my text' }).click();
-    const clip = await conflict.evaluate(() => navigator.clipboard.readText()).catch(() => '');
-    expect('"Copy my text" copies the page as markdown', clip.includes('Conflicting words.') && clip.includes('[!warning]'), clip.slice(-100));
-    await shot(conflict, 'wiki-editor-conflict-desktop');
+    // Edits made at the same time (see concurrentEdits below).
+    const conflict = await concurrentEdits({ open, expect, shot, wikiApiCalls });
 
     // Links in visual mode: a click places the cursor (never follows the link); the Link button edits
     // the link at the cursor (its address and text shown), links a selection, and removes a link.
@@ -449,6 +436,171 @@ module.exports = {
     await historyAndPages({ open, goto, expect, shot, requests, wikiApiCalls });
   },
 };
+
+/**
+ * Edits made by someone else while the editor was open (the wiki API stand-in plays them by the
+ * save's summary): combined by the Worker ("combined with ... 's edit", the combined page shown,
+ * and it round-trips through the editor unchanged); overlapping (the two versions side by side,
+ * one part taken from theirs, edited, saved combined against their version; Cancel keeps the
+ * editor's text; on a phone in one column); deleted meanwhile (saved as a new page, asking for
+ * another title when it is taken). Returns the page of the side-by-side case.
+ */
+async function concurrentEdits({ open, expect, shot, wikiApiCalls }) {
+  const main = (page) => page.locator('main');
+  const original = FIXTURE_MARKDOWN['how-to-benchmark'];
+  const openEditor = async (page, mode) => {
+    await main(page).locator('[data-wiki-edit]').click();
+    const pm = page.locator('[data-wiki-visual-editor] .ProseMirror');
+    await pm.waitFor({ timeout: 10000 }).catch(() => {});
+    if (mode === 'markdown') {
+      await page.getByRole('button', { name: 'Markdown' }).click();
+      await page.locator('[data-wiki-editor-content] .cm-content').waitFor({ timeout: 10000 }).catch(() => {});
+    }
+    return pm;
+  };
+  /** Type at the end of the page's last line in the markdown editor (the text ends with a newline). */
+  const typeAtEnd = async (page, words) => {
+    await page.locator('[data-wiki-editor-content] .cm-content').click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press('Control+End');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type(words);
+    await page.keyboard.press('Enter');
+  };
+  const save = async (page, summary) => {
+    await page.locator('[data-wiki-summary]').fill(summary);
+    await page.locator('[data-wiki-save]').click();
+  };
+  const sideText = (page, side) => page.evaluate((s) => [...document.querySelectorAll(`[data-wiki-combine-${s}] .cm-line`)].map((l) => l.textContent).join('\n'), side);
+
+  // Combined by the Worker: the page says with whose edit and when, and shows the combined page.
+  const merged = await open('/wiki/how-to-benchmark', 'desktop', { wiki: 'editor' });
+  const mpm = await openEditor(merged);
+  await toEnd(mpm, merged);
+  await merged.keyboard.type(' Combined words.');
+  await save(merged, 'force merge');
+  await merged.locator('[data-wiki-saved]').waitFor({ timeout: 5000 }).catch(() => {});
+  const mtext = await main(merged).innerText();
+  expect(
+    'concurrent edit, no overlap: "Saved. Your edit was combined with abucnasty\'s edit from 5 minutes ago", and the combined page shows',
+    /Saved\. Your edit was combined with abucnasty's edit from 5 minutes ago\. The site updates in about a minute/.test(mtext) && mtext.includes('Before you start') && mtext.includes('Combined words.') && (await merged.locator('[data-wiki-editor]').count()) === 0,
+    mtext.slice(0, 300),
+  );
+  await shot(merged, 'wiki-editor-combined-desktop');
+  // The combined page round-trips through the editor: opened (visual), Markdown, Visual, Draft on, saved.
+  const combinedBody = wikiApiCalls(merged).saves[0]?.meta?.body?.replace('## Prerequisites', '## Before you start');
+  await openEditor(merged);
+  await merged.getByRole('button', { name: 'Markdown' }).click();
+  await merged.locator('.cm-content').waitFor({ timeout: 10000 }).catch(() => {});
+  await merged.getByRole('button', { name: 'Visual' }).click();
+  await merged.locator('[data-wiki-visual-editor] .ProseMirror').waitFor({ timeout: 10000 }).catch(() => {});
+  await merged.locator('[data-wiki-draft-switch]').click();
+  await merged.locator('[data-wiki-save]').click();
+  await merged.locator('[data-wiki-saved]').waitFor({ timeout: 5000 }).catch(() => {});
+  const again = wikiApiCalls(merged).saves[1]?.meta;
+  expect('the combined page round-trips through the editor unchanged', !!combinedBody && again && again.body === combinedBody && again.draft === true, again && JSON.stringify(again.body.slice(-160)));
+
+  // Overlapping: the two versions side by side; take their part, edit, save the combined version.
+  const conflict = await open('/wiki/how-to-benchmark', 'desktop', { wiki: 'editor' });
+  await openEditor(conflict, 'markdown');
+  await typeAtEnd(conflict, ' Conflicting words.');
+  await save(conflict, 'force conflict');
+  const combine = conflict.locator('[data-wiki-combine]');
+  await combine.locator('.cm-mergeView').waitFor({ timeout: 10000 }).catch(() => {});
+  const theirs0 = await sideText(conflict, 'theirs');
+  const mine0 = await sideText(conflict, 'mine');
+  expect(
+    'overlap: the two versions side by side, who changed it, the editor hidden',
+    (await combine.getAttribute('data-wiki-combine').catch(() => null)) === 'side-by-side' &&
+      /Other Editor \(5 minutes ago\) changed the same part of this page/.test(await combine.locator('[data-wiki-combine-notice]').innerText().catch(() => '')) &&
+      !(await conflict.locator('[data-wiki-editor-content]').isVisible()),
+  );
+  expect('overlap: their version on one side, mine on the other', theirs0.includes(THEIRS_LAST) && mine0.includes('Conflicting words.'), JSON.stringify([theirs0.slice(-120), mine0.slice(-120)]));
+  // Their change to a heading is already in mine (the saved body below has it): only the line both changed is marked.
+  const take = combine.locator('[data-wiki-combine-control="reject"]');
+  expect('overlap: one marked part (their other change already in mine), with "Use theirs"', (await take.count()) === 1, String(await take.count()));
+  await shot(conflict, 'wiki-editor-conflict-desktop');
+  await take.first().click();
+  const mine1 = await sideText(conflict, 'mine');
+  expect('"Use theirs" takes their version of that part', mine1.includes(THEIRS_LAST) && !mine1.includes('Conflicting words.'), mine1.slice(-160));
+  await combine.locator('[data-wiki-combine-mine] .cm-line', { hasText: 'updated in Obsidian' }).click();
+  await conflict.keyboard.press('End');
+  await conflict.keyboard.type(' And mine.');
+  await combine.locator('[data-wiki-combine-save]').click();
+  await conflict.locator('[data-wiki-saved]').waitFor({ timeout: 5000 }).catch(() => {});
+  const cs = wikiApiCalls(conflict).saves;
+  const combinedSave = cs[cs.length - 1]?.meta ?? {};
+  const want = theirsVersion(original).replace(THEIRS_LAST, `${THEIRS_LAST} And mine.`);
+  expect(
+    'save combined: against their version (blob, head, frontmatter), with the part taken and the edit',
+    cs.length === 2 && combinedSave.path === 'wiki/Guides/How to Benchmark.md' && combinedSave.base === THEIR_BLOB && combinedSave.head === THEIR_HEAD && combinedSave.frontmatter === FRONTMATTER && combinedSave.body === want && combinedSave.draft === false,
+    JSON.stringify({ ...combinedSave, body: combinedSave.body && combinedSave.body.slice(-120) }),
+  );
+  expect('save combined: saved, the combined page shows', /Saved\. The site updates/.test(await main(conflict).innerText()) && (await main(conflict).innerText()).includes('updated in Obsidian. And mine.'));
+
+  // Cancel: back to the editor with the editor's own text.
+  const cancel = await open('/wiki/how-to-benchmark', 'desktop', { wiki: 'editor' });
+  await openEditor(cancel, 'markdown');
+  await typeAtEnd(cancel, ' Kept words.');
+  await save(cancel, 'force conflict');
+  await cancel.locator('[data-wiki-combine] .cm-mergeView').waitFor({ timeout: 10000 }).catch(() => {});
+  await cancel.locator('[data-wiki-combine-cancel]').click();
+  await cancel.locator('[data-wiki-combine]').waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
+  const kept = await markdownText(cancel);
+  expect('Cancel: back to the editor, my text as it was', (await cancel.locator('[data-wiki-editor-content]').isVisible()) && kept.includes('Kept words.') && !kept.includes('Before you start') && wikiApiCalls(cancel).saves.length === 1, kept.slice(-120));
+  // Any other refusal keeps the text with "Copy my text".
+  await cancel.route('**/api/wiki/save', (route) => route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'github_error', message: "Couldn't reach GitHub to save the page. Nothing was saved; try again in a minute." }) }));
+  await cancel.locator('[data-wiki-save]').click();
+  const err = cancel.locator('[data-wiki-save-error="github_error"]');
+  await err.waitFor({ timeout: 5000 }).catch(() => {});
+  await err.getByRole('button', { name: 'Copy my text' }).click().catch(() => {});
+  const clip = await cancel.evaluate(() => navigator.clipboard.readText()).catch(() => '');
+  expect('another refusal: the reason, text kept, "Copy my text" copies it', /Couldn't reach GitHub/.test(await err.innerText().catch(() => '')) && clip.includes('Kept words.') && clip.includes('[!warning]'), clip.slice(-100));
+  await cancel.unroute('**/api/wiki/save');
+
+  // A phone: the two versions in one column, no sideways scroll.
+  const phone = await open('/wiki/how-to-benchmark', 'phone', { wiki: 'editor' });
+  await openEditor(phone, 'markdown');
+  await typeAtEnd(phone, ' Phone words.');
+  await save(phone, 'force conflict');
+  const pc = phone.locator('[data-wiki-combine]');
+  await pc.locator('.cm-editor').waitFor({ timeout: 10000 }).catch(() => {});
+  const over = await phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(
+    'phone: the two versions stacked in one column (their lines above mine, "Use theirs" / "Keep mine"), no sideways scroll',
+    (await pc.getAttribute('data-wiki-combine').catch(() => null)) === 'stacked' && (await pc.locator('.cm-deletedChunk').count()) > 0 && (await pc.locator('[data-wiki-combine-control="reject"]').count()) === 1 && (await pc.locator('[data-wiki-combine-control="accept"]').count()) === 1 && over <= 0,
+    `overflow ${over}px`,
+  );
+  await shot(phone, 'wiki-editor-conflict-phone');
+  await pc.locator('[data-wiki-combine-control="reject"]').click();
+  await pc.locator('[data-wiki-combine-save]').click();
+  await phone.locator('[data-wiki-saved]').waitFor({ timeout: 5000 }).catch(() => {});
+  const ps = wikiApiCalls(phone).saves;
+  expect('phone: "Use theirs", then saved combined', ps.length === 2 && ps[1].meta.base === THEIR_BLOB && ps[1].meta.body === theirsVersion(original), ps[1] && JSON.stringify(ps[1].meta.body.slice(-120)));
+
+  // Deleted meanwhile: the text stays; saved as a new page, under another title when it is taken.
+  const gone = await open('/wiki/how-to-benchmark', 'desktop', { wiki: 'editor' });
+  const gpm = await openEditor(gone);
+  await toEnd(gpm, gone);
+  await gone.keyboard.type(' Saved anew.');
+  await save(gone, 'force gone');
+  const goneNotice = gone.locator('[data-wiki-deleted-meanwhile]');
+  await goneNotice.waitFor({ timeout: 5000 }).catch(() => {});
+  expect('deleted meanwhile: who and when, "Save as a new page" or "Discard", the text still on screen', /abucnasty deleted this page 5 minutes ago while you were editing/.test(await goneNotice.innerText().catch(() => '')) && (await goneNotice.locator('[data-wiki-discard]').count()) === 1 && (await gpm.innerText()).includes('Saved anew.'));
+  await goneNotice.locator('[data-wiki-save-as-new]').click();
+  const newTitle = gone.locator('[data-wiki-gone-title]');
+  await newTitle.waitFor({ timeout: 5000 }).catch(() => {});
+  expect('save as a new page: its title is taken now, so another is asked for', (await newTitle.count()) === 1 && /already a page called "How to Benchmark"/.test(await goneNotice.innerText().catch(() => '')), (await goneNotice.innerText().catch(() => '')) + ' || ' + JSON.stringify(wikiApiCalls(gone).saves.map((x) => x.meta.create ?? x.meta.path)) + ' ' + gone.url() + ' ' + wikiApiCalls(gone).slice(-4).join(','));
+  await newTitle.fill('How to Benchmark Again');
+  await gone.locator('[data-wiki-save-new-title]').click();
+  await gone.waitForURL(/\/wiki\/how-to-benchmark-again$/, { timeout: 5000 }).catch(() => {});
+  const gs = wikiApiCalls(gone).saves.map((x) => x.meta);
+  expect(
+    'save as a new page: a new page in the same folder, from no blob, at its new address',
+    gs.length === 3 && gs[1].create?.title === 'How to Benchmark' && gs[2].create?.title === 'How to Benchmark Again' && gs[2].create.folder === 'Guides' && gs[2].base === null && gs[2].frontmatter === '' && gs[2].body.includes('Saved anew.') && /\/wiki\/how-to-benchmark-again$/.test(gone.url()) && /Saved\./.test(await main(gone).innerText()),
+    JSON.stringify(gs.map((m) => m.create ?? m.path)) + ' ' + gone.url(),
+  );
+  return conflict;
+}
 
 const DIFF_CHUNK = /\/assets\/WikiDiff-[^/]*\.js$/;
 const ACTIONS_CHUNK = /\/assets\/WikiPageActions-[^/]*\.js$/;

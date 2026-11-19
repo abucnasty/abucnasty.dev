@@ -11,6 +11,11 @@
 //   the save into the page's _attachments folder, inserted as ![[name]].
 // - Saving shows what happened: saved (and that the site updates in about a minute), or why not,
 //   with the text kept on screen and a "Copy my text" button.
+// - Edits made by someone else meanwhile (worker/wikiMerge.ts): combined by the Worker when they
+//   don't overlap (the page view then says with whose edit, and shows the combined page); when
+//   they do, the two versions side by side (Combine.tsx) to choose from and save combined. A page
+//   renamed meanwhile is saved at its new address; one deleted meanwhile can be saved as a new
+//   page (asking for another title when its title is taken) or discarded.
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -55,17 +60,20 @@ import ArrowDropDown from '@mui/icons-material/ArrowDropDown';
 import { markdownSx } from '../components/MarkdownRenderer';
 import { wikiSx } from '../components/WikiMarkdown';
 import { layout } from '../layout';
-import { findWikiTarget, resolveWikiFile, wikiFileUrl, youtubeVideo, type WikiIndex } from '../wikiCore';
-import { rememberSaved } from '../wikiSaved';
+import { findWikiTarget, resolveWikiFile, wikiFileUrl, wikiSlug, youtubeVideo, type WikiIndex } from '../wikiCore';
+import { rememberMoved, rememberSaved } from '../wikiSaved';
 import { isEditor, useWikiSession } from '../wikiAuth';
 import { MAX_SUMMARY } from '../wikiSource';
-import { loadSource, savePage, SaveError, type PageSource, type SaveResult } from './api';
+import { loadSource, savePage, SaveError, type Conflict, type Gone, type PageSource, type SaveResult } from './api';
+import { savedNotice, timeAgo } from './concurrent';
 import { ImageError, prepareImage, type PreparedImage } from './images';
 import type { MarkdownAction } from './MarkdownEditor';
 import { createVisualEditor, type BlockStyle, type VisualEditor, type WikiLookup } from './milkdown';
 
 // CodeMirror comes in its own chunk, the first time Markdown mode opens.
 const MarkdownEditor = lazy(() => import('./MarkdownEditor').then((m) => ({ default: m.MarkdownEditor })));
+// The side-by-side view of two edits made at the same time, the first time one is shown.
+const Combine = lazy(() => import('./Combine'));
 
 type Mode = 'visual' | 'markdown';
 const MODE_KEY = 'wiki-editor-mode';
@@ -183,6 +191,10 @@ function linkLabel(index: WikiIndex, value: string): { label: string; missing: b
 
 type Load = { status: 'loading' } | { status: 'ready'; source: PageSource } | { status: 'failed'; message: string };
 type SaveState = { status: 'idle' } | { status: 'saving' } | { status: 'failed'; code: string; message: string };
+/** Two edits to combine, and how saving the combined version went. */
+type Combining = { conflict: Conflict; busy: boolean; error: string | null };
+/** The page was deleted meanwhile: save the text as a new page (under `title`) or discard it. */
+type Deleted = { gone: Gone; title: string; askTitle: boolean; busy: boolean; error: string | null };
 
 export function WikiEditor({ index, target, onClose, onSaved }: WikiEditorProps) {
   const [load, setLoad] = useState<Load>(() =>
@@ -260,6 +272,15 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
   /** The style of the block at the cursor, for the style picker. */
   const [blockStyle, setBlockStyle] = useState<BlockStyle>(0);
   const [calloutMenu, setCalloutMenu] = useState<HTMLElement | null>(null);
+  const [combining, setCombining] = useState<Combining | null>(null);
+  const [deleted, setDeleted] = useState<Deleted | null>(null);
+  const top = useRef<HTMLDivElement>(null);
+  // The two versions (or the deleted page's choices) open above the editor: bring them into view.
+  const shownConflict = combining?.conflict;
+  const shownGone = deleted?.gone;
+  useEffect(() => {
+    if (shownConflict || shownGone) top.current?.scrollIntoView({ block: 'start' });
+  }, [shownConflict, shownGone]);
 
   const visual = useRef<VisualEditor | null>(null);
   const visualHost = useRef<HTMLDivElement>(null);
@@ -422,6 +443,73 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
     }
   };
 
+  /** Only images still on the page go up. */
+  const imagesIn = (body: string) => [...images.current.values()].filter((i) => body.includes(`![[${i.name}`)).map((i) => ({ name: i.name, blob: i.blob }));
+
+  /** Saved: remember the page as saved (the combined text, at its new address) and close. */
+  const finish = (result: SaveResult, body: string) => {
+    setTouched(false);
+    const shown = result.body ?? body;
+    const done = { ...result, notice: savedNotice(result, Date.now()) };
+    if (!result.unchanged || result.merged || result.renamedFrom) {
+      const files = (result.images ?? []).map((i) => ({
+        path: i.path.replace(/^wiki\//, ''),
+        published: '',
+        type: '',
+        size: 0,
+        v: i.oid,
+        url: `/api/wiki/image/${i.oid}`,
+      }));
+      const old = index.pages.find((p) => p.slug === result.slug) ?? index.pages.find((p) => p.slug === wikiSlug(source.title));
+      const page = {
+        meta: {
+          ...(old ?? { aliases: [], headings: [], excerpt: '', links: [], files: [] }),
+          title: result.title,
+          slug: result.slug,
+          folder: result.folder,
+          blob: result.blob,
+          draft: result.draft,
+        },
+        body: shown,
+        files,
+        draft: result.draft,
+        created: !!result.created,
+        at: Date.now(),
+      };
+      const from = wikiSlug(source.title);
+      if (result.renamedFrom && from !== result.slug) {
+        // At the new address first (with the notice): the old one would redirect there without it.
+        onSaved(done);
+        rememberMoved(from, page);
+        return;
+      }
+      rememberSaved(page);
+    }
+    onSaved(done);
+  };
+
+  /** The draft switch to send against `next` (the page as it is now): the editor's, if they changed it. */
+  const draftFor = (next: { draft: boolean }) => (draft !== source.draft ? draft : next.draft);
+
+  /** A save refused: a conflict opens the two versions, a deleted page offers to save it anew. */
+  const refused = (err: unknown): string | null => {
+    const e = err instanceof SaveError ? err : new SaveError(0, 'error', 'Saving failed. Nothing was saved; try again.');
+    const conflict = e.conflict();
+    if (conflict) {
+      setCombining({ conflict, busy: false, error: null });
+      setSave({ status: 'idle' });
+      return null;
+    }
+    const gone = e.gone();
+    if (gone) {
+      setCombining(null);
+      setDeleted({ gone, title: gone.title, askTitle: false, busy: false, error: null });
+      setSave({ status: 'idle' });
+      return null;
+    }
+    return e.message;
+  };
+
   const doSave = async () => {
     const body = currentText();
     if (source.path !== null && body === source.body && draft === source.draft && images.current.size === 0) {
@@ -432,43 +520,46 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
       setSave({ status: 'failed', code: 'empty', message: 'Write something on the page first.' });
       return;
     }
-    // Only images still on the page go up.
-    const used = [...images.current.values()].filter((i) => body.includes(`![[${i.name}`));
     setSave({ status: 'saving' });
     setCopied(false);
     try {
-      const result = await savePage({ source, body, draft, summary, images: used.map((i) => ({ name: i.name, blob: i.blob })) });
-      setTouched(false);
-      if (!result.unchanged) {
-        const files = (result.images ?? []).map((i) => ({
-          path: i.path.replace(/^wiki\//, ''),
-          published: '',
-          type: '',
-          size: 0,
-          v: i.oid,
-          url: `/api/wiki/image/${i.oid}`,
-        }));
-        const old = index.pages.find((p) => p.slug === result.slug);
-        rememberSaved({
-          meta: {
-            ...(old ?? { aliases: [], headings: [], excerpt: '', links: [], files: [] }),
-            title: result.title,
-            slug: result.slug,
-            folder: result.folder,
-            blob: result.blob,
-            draft: result.draft,
-          },
-          body,
-          files,
-          draft: result.draft,
-          created: !!result.created,
-          at: Date.now(),
-        });
-      }
-      onSaved(result);
+      finish(await savePage({ source, body, draft, summary, images: imagesIn(body) }), body);
+    } catch (err) {
+      const message = refused(err);
+      if (message !== null) setSave({ status: 'failed', code: err instanceof SaveError ? err.code : 'error', message });
+    }
+  };
+
+  /** "Save combined version": against the page as it is now (merged again if it changed once more). */
+  const saveCombined = async (body: string) => {
+    if (!combining) return;
+    const c = combining.conflict;
+    setCombining({ ...combining, busy: true, error: null });
+    const now: PageSource = { path: c.path, title: c.title, folder: c.folder, blob: c.theirs.blob, head: c.theirs.head, frontmatter: c.theirs.frontmatter, body: c.theirs.body, draft: c.theirs.draft };
+    try {
+      const result = await savePage({ source: now, body, draft: draftFor(c.theirs), summary, images: imagesIn(body) });
+      // Renamed before the conflict: the rename is news here too.
+      finish(c.renamedFrom && !result.renamedFrom ? { ...result, renamedFrom: c.renamedFrom } : result, body);
+    } catch (err) {
+      const message = refused(err);
+      if (message !== null) setCombining({ conflict: c, busy: false, error: message });
+    }
+  };
+
+  /** "Save as a new page": the text as a new page at the deleted page's place (or under a new title). */
+  const saveAsNew = async () => {
+    if (!deleted) return;
+    const body = currentText();
+    const title = deleted.title.trim();
+    setDeleted({ ...deleted, busy: true, error: null });
+    const fresh: PageSource = { path: null, title, folder: deleted.gone.folder, blob: null, frontmatter: '', body: '', draft };
+    try {
+      finish(await savePage({ source: fresh, body, draft, summary, images: imagesIn(body) }), body);
     } catch (err) {
       const e = err instanceof SaveError ? err : new SaveError(0, 'error', 'Saving failed. Nothing was saved; try again.');
-      setSave({ status: 'failed', code: e.code, message: e.message });
+      // Its title is taken (or isn't one a page can have): ask for another.
+      const ask = e.code === 'exists' || (e.code === 'bad_request' && deleted.askTitle);
+      setDeleted({ ...deleted, title, busy: false, askTitle: deleted.askTitle || ask, error: e.message });
     }
   };
 
@@ -483,7 +574,7 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
   const mod = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
 
   return (
-    <Stack spacing={2} data-wiki-editor data-mode={mode}>
+    <Stack spacing={2} data-wiki-editor data-mode={mode} ref={top} sx={{ scrollMarginTop: layout.topBarHeight + 16 }}>
       {noAccess && (
         <Alert severity="warning" data-wiki-editor-no-access>
           {session.status === 'signed-out' ? "You're signed out" : "You don't have wiki access any more"}, so this can't be saved. Your text is still here: copy it before you leave.
@@ -494,10 +585,61 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
           {notice}
         </Alert>
       )}
+      {deleted && (
+        <Alert
+          severity="warning"
+          data-wiki-deleted-meanwhile
+          action={
+            <Stack direction="row" spacing={1}>
+              {!deleted.askTitle && (
+                <Button color="inherit" size="small" onClick={() => void saveAsNew()} disabled={deleted.busy || noAccess} data-wiki-save-as-new>
+                  Save as a new page
+                </Button>
+              )}
+              <Button color="inherit" size="small" onClick={onClose} disabled={deleted.busy} data-wiki-discard>
+                Discard
+              </Button>
+            </Stack>
+          }
+        >
+          {deleted.gone.deleted ? `${deleted.gone.deleted.author} deleted this page ${timeAgo(deleted.gone.deleted.date, Date.now())}` : 'This page was deleted'} while you were editing. Your text is still here: save it as a new page, or discard it.
+          {deleted.error && (
+            <Box sx={{ mt: 1 }} data-wiki-save-as-new-error>
+              {deleted.error}
+            </Box>
+          )}
+          {deleted.askTitle && (
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mt: 1.5, alignItems: { sm: 'center' } }}>
+              <TextField
+                size="small"
+                label="Title for the new page"
+                value={deleted.title}
+                onChange={(e) => setDeleted({ ...deleted, title: e.target.value, error: null })}
+                slotProps={{ htmlInput: { 'data-wiki-gone-title': '' } }}
+              />
+              <Button variant="contained" size="small" onClick={() => void saveAsNew()} disabled={deleted.busy || deleted.title.trim() === '' || noAccess} data-wiki-save-new-title>
+                {deleted.busy ? 'Saving…' : 'Save as a new page'}
+              </Button>
+            </Stack>
+          )}
+        </Alert>
+      )}
+      {combining && (
+        <Suspense fallback={<CircularProgress aria-label="Opening the two versions" />}>
+          <Combine
+            key={combining.conflict.theirs.blob}
+            conflict={combining.conflict}
+            busy={combining.busy}
+            error={combining.error}
+            onSave={(t) => void saveCombined(t)}
+            onCancel={() => setCombining(null)}
+          />
+        </Suspense>
+      )}
 
       <Paper
         variant="outlined"
-        sx={{ position: 'sticky', top: layout.topBarHeight, zIndex: 2, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.25, px: 0.5, py: 0.5 }}
+        sx={{ position: 'sticky', top: layout.topBarHeight, zIndex: 2, display: combining ? 'none' : 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.25, px: 0.5, py: 0.5 }}
         role="toolbar"
         aria-label="Formatting"
       >
@@ -565,7 +707,7 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
         </Alert>
       )}
 
-      <Box data-wiki-editor-content>
+      <Box data-wiki-editor-content sx={{ display: combining ? 'none' : undefined }}>
         {mode === 'visual' ? (
           <Box ref={visualHost} sx={[markdownSx, wikiSx, visualSx]} data-wiki-visual-editor />
         ) : (
@@ -585,7 +727,7 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
         )}
       </Box>
 
-      <Paper variant="outlined" sx={{ p: 1.5, position: { sm: 'sticky' }, bottom: 0, zIndex: 2 }} data-wiki-save-bar>
+      <Paper variant="outlined" sx={{ p: 1.5, position: { sm: 'sticky' }, bottom: 0, zIndex: 2, display: combining ? 'none' : undefined }} data-wiki-save-bar>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ alignItems: { sm: 'center' } }}>
           <TextField
             size="small"
