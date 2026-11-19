@@ -74,7 +74,7 @@ import { changePage, type PageAction, type PageDeps } from './wikiPages.ts';
 import { pageHistory, RECENT_DAYS, recentlyDeleted, type HistoryGitHub } from './wikiHistory.ts';
 import type { CommitFile } from './github.ts';
 import { normaliseWikiIndex, type WikiIndex } from '../src/wikiCore.ts';
-import { isPagePath, newPagePath, titleClash } from '../src/wikiSource.ts';
+import { isPagePath, newPagePath, pageTitle, titleClash } from '../src/wikiSource.ts';
 
 export const WIKI_API = '/api/wiki/';
 /** R2 keys of the drafts in the catalog bucket (written by the vault's CI; the vault host never serves them). */
@@ -497,7 +497,7 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
         const { files } = await readWiki(g);
         const live = new Set([...files.keys()]);
         const found = await recentlyDeleted(historyGitHub(g, misses), VAULT_BRANCH, since, live, () => misses.n < MAX_FILE_LISTS);
-        const titles = [...files.keys()].filter(isPagePath).map((p) => p.slice(p.lastIndexOf('/') + 1, -3));
+        const titles = [...files.keys()].filter(isPagePath).map(pageTitle);
         const taken = [...titles, ...(await aliases(null))];
         return { since, partial: found.partial, pages: found.pages.map((p) => ({ ...p, titleTaken: titleClash(p.title, taken) })) };
       });
