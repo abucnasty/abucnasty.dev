@@ -170,10 +170,11 @@ function youtube(node: Paragraph): void {
 }
 
 const MISSING_TITLE = 'This page does not exist yet';
-const missing = (children: PhrasingContent[], title = MISSING_TITLE): PhrasingContent => ({
+/** A page or image that is not there; `page` (a missing page's title) lets an editor create it. */
+const missing = (children: PhrasingContent[], title = MISSING_TITLE, page?: string): PhrasingContent => ({
   type: 'emphasis',
   children,
-  data: { hName: 'span', hProperties: { className: ['wiki-missing'], title } },
+  data: { hName: 'span', hProperties: { className: ['wiki-missing'], title, ...(page ? { dataPage: page } : {}) } },
 });
 
 const WIKI_LINK = /(!?)\[\[([^\]\n]+)\]\]/g;
@@ -211,7 +212,7 @@ function wikiLinks(value: string, ctx: WikiContext): PhrasingContent[] {
     const label = params.join('|') || (name && heading ? `${name.replace(/\.md$/i, '')} > ${heading}` : name.replace(/\.md$/i, '') || heading);
     const href = pageHref(ctx.index, ctx.page, name, heading);
     if (href.kind === 'page') out.push({ type: 'link', url: href.url, children: [{ type: 'text', value: label }] });
-    else out.push(missing([{ type: 'text', value: label }]));
+    else out.push(missing([{ type: 'text', value: label }], MISSING_TITLE, name.replace(/\.md$/i, '').split('/').pop()));
   }
   if (last === 0) return [{ type: 'text', value }];
   if (last < value.length) out.push({ type: 'text', value: value.slice(last) });
@@ -224,7 +225,7 @@ function inline(nodes: PhrasingContent[], ctx: WikiContext): PhrasingContent[] {
     if (n.type === 'text') out.push(...wikiLinks(n.value, ctx));
     else if (n.type === 'link') {
       const href = resolveWikiHref(ctx.index, ctx.page, n.url);
-      if (href.kind === 'missing') out.push(missing(n.children));
+      if (href.kind === 'missing') out.push(missing(n.children, MISSING_TITLE, /\.md$/i.test(href.target) ? href.target.replace(/\.md$/i, '').split('/').pop() : undefined));
       else out.push({ ...n, url: href.url } as Link);
     } else if (n.type === 'image') {
       const href = resolveWikiHref(ctx.index, ctx.page, n.url);
@@ -260,7 +261,7 @@ export const wikiSanitizeSchema: SanitizeSchema = {
   attributes: {
     ...defaultSchema.attributes,
     div: [...(defaultSchema.attributes?.div ?? []), ['className', /^callout(?:-title|-[a-z]+)?$/, 'youtube-embed'], 'dataYoutube', 'dataStart'],
-    span: [['className', 'wiki-missing']],
+    span: [['className', 'wiki-missing'], 'dataPage'],
   },
 };
 

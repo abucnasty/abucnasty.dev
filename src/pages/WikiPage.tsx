@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Navigate, Link as RouterLink, useLocation, useParams } from 'react-router-dom';
-import { Box, Button, Stack } from '@mui/material';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
+import { Navigate, Link as RouterLink, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Alert, Box, Button, Stack, Tooltip } from '@mui/material';
 import { PageHeader } from '../components/PageHeader';
 import { DraftBanner, DraftChip, WikiFooter, WikiSignInNotice } from '../components/WikiAccess';
 import { WikiMarkdown } from '../components/WikiMarkdown';
 import { WikiLoadFailed, WikiLoading, WikiPageNotFound } from '../components/WikiStates';
+import { isEditor, useWikiSession, type WikiSession } from '../wikiAuth';
+import { savedPage, useSavedPages } from '../wikiSaved';
 import { layout } from '../layout';
 import {
   WIKI_ALL_ROUTE,
@@ -14,8 +16,50 @@ import {
   loadWikiMarkdown,
   useWikiIndex,
   wikiRoute,
+  type WikiIndex,
   type WikiPageMeta,
 } from '../wiki';
+
+// The editor (Milkdown, CodeMirror and the save flow) is its own chunk, fetched only when an
+// editor presses Edit or creates a page.
+const WikiEditor = lazy(() => import('../wikiEditor/WikiEditor'));
+
+/** A new page asked for from the "New page" dialog (router state, so it survives a reload). */
+interface CreateState {
+  create?: { title: string; folder: string };
+}
+
+const EDITING_OFF: Record<string, string> = {
+  'read-only': 'Wiki editing is paused for now.',
+  unavailable: "Wiki editing isn't set up on the site yet.",
+};
+
+/** Edit, for wiki editors: disabled (with the reason) while saving is off. */
+function EditButton({ session, onClick }: { session: WikiSession; onClick: () => void }) {
+  if (!isEditor(session) || session.status !== 'signed-in') return null;
+  const off = session.me.editing && session.me.editing !== 'on' ? EDITING_OFF[session.me.editing] : null;
+  const button = (
+    <Button size="small" variant="outlined" onClick={onClick} disabled={!!off} data-wiki-edit>
+      Edit
+    </Button>
+  );
+  return off ? (
+    <Tooltip title={off}>
+      <span>{button}</span>
+    </Tooltip>
+  ) : (
+    button
+  );
+}
+
+/** The index with a page saved in this visit (and its new images) in it. */
+function withSaved(index: WikiIndex, page: WikiPageMeta, files: WikiIndex['files']): WikiIndex {
+  return {
+    ...index,
+    pages: [...index.pages.filter((p) => p.slug !== page.slug), page],
+    files: [...files, ...index.files.filter((f) => !files.some((n) => n.path === f.path))],
+  };
+}
 
 type Body = { status: 'loading' } | { status: 'ready'; markdown: string } | { status: 'failed' };
 
@@ -68,13 +112,46 @@ const allPagesButton = (
  */
 export function WikiPage() {
   const { slug: param } = useParams();
-  const { search, hash } = useLocation();
+  const { search, hash, state: routeState } = useLocation();
+  const navigate = useNavigate();
   const slug = param ?? WIKI_HOME;
   const state = useWikiIndex();
-  const page = state.index ? findWikiPage(state.index, slug) : undefined;
-  const { body, retry } = usePageBody(page);
-  const context = useMemo(() => (state.index && page ? { index: state.index, page } : null), [state.index, page]);
-  useScrollToHash(body.status === 'ready', hash);
+  const session = useWikiSession();
+  useSavedPages();
+  const saved = savedPage(slug);
+  const published = state.index ? findWikiPage(state.index, slug) : undefined;
+  const page = saved?.meta ?? published;
+  const { body, retry } = usePageBody(published);
+  const index = useMemo(() => (state.index && saved ? withSaved(state.index, saved.meta, saved.files) : state.index), [state.index, saved]);
+  const context = useMemo(() => (index && page ? { index, page } : null), [index, page]);
+  const create = (routeState as CreateState | null)?.create;
+  const [editing, setEditing] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  useEffect(() => {
+    setEditing(false);
+    setSavedNotice(null);
+  }, [slug]);
+  const shown: Body = saved ? { status: 'ready', markdown: saved.body } : body;
+  useScrollToHash(shown.status === 'ready' && !editing, hash);
+
+  const onSaved = (result: { slug: string; draft: boolean; unchanged?: boolean; created?: boolean }) => {
+    setEditing(false);
+    setSavedNotice(
+      result.unchanged
+        ? 'Nothing had changed, so nothing was saved.'
+        : result.draft
+          ? 'Saved as a draft. Wiki editors will see it on the site in about a minute.'
+          : 'Saved. The site updates in about a minute; this is the saved version.',
+    );
+    // A new page is a page now: drop the "create" request so a reload does not open the editor again.
+    if (create) navigate(`${wikiRoute(result.slug)}${search}`, { replace: true, state: null });
+    window.scrollTo({ top: 0 });
+  };
+  const editor = (target: { slug: string } | { create: { title: string; folder: string } }) => (
+    <Suspense fallback={<WikiLoading label="Opening the editor" />}>
+      <WikiEditor index={index!} target={target} onClose={() => setEditing(false)} onSaved={onSaved} />
+    </Suspense>
+  );
 
   if (param === WIKI_HOME) return <Navigate to={`/wiki${search}${hash}`} replace />;
   if (state.status === 'loading') return <WikiLoading label="Loading the page" />;
@@ -84,10 +161,20 @@ export function WikiPage() {
     if (moved) return <Navigate to={`${wikiRoute(moved.slug)}${search}${hash}`} replace />;
     // It may be a draft: wait until it is known whether this visitor gets them.
     if (state.draftsPending) return <WikiLoading label="Loading the page" />;
+    // A new page an editor asked for: the editor, on a page that does not exist yet.
+    if (create && isEditor(session)) {
+      return (
+        <Stack spacing={2}>
+          <PageHeader overline={['Wiki', ...(create.folder ? create.folder.split('/') : []), 'New page'].join(' / ')} title={create.title} actions={allPagesButton} />
+          {editor({ create })}
+          <WikiFooter />
+        </Stack>
+      );
+    }
     return (
       <Stack spacing={2}>
         <WikiSignInNotice />
-        <WikiPageNotFound slug={slug} />
+        <WikiPageNotFound slug={slug} editor={isEditor(session)} />
         <WikiFooter />
       </Stack>
     );
@@ -102,18 +189,29 @@ export function WikiPage() {
         overline={home ? undefined : ['Wiki', ...(page.folder ? page.folder.split('/') : [])].join(' / ')}
         title={home ? 'Wiki' : page.title}
         meta={home ? `${pages} ${pages === 1 ? 'page' : 'pages'}` : page.draft ? <DraftChip /> : undefined}
-        actions={allPagesButton}
+        actions={
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            {!editing && <EditButton session={session} onClick={() => (setSavedNotice(null), setEditing(true))} />}
+            {allPagesButton}
+          </Stack>
+        }
       />
       {page.draft && <DraftBanner />}
+      {savedNotice && !editing && (
+        <Alert severity="success" onClose={() => setSavedNotice(null)} data-wiki-saved>
+          {savedNotice}
+        </Alert>
+      )}
       <Box
         sx={{
           // Headings scrolled to (from a link's #anchor) stay clear of the sticky top bar.
           '& h1, & h2, & h3, & h4, & h5, & h6': { scrollMarginTop: layout.topBarHeight + 16 },
         }}
       >
-        {body.status === 'loading' && <WikiLoading label="Loading the page" />}
-        {body.status === 'failed' && <WikiLoadFailed what="The page" onRetry={retry} />}
-        {body.status === 'ready' && <WikiMarkdown source={body.markdown} context={context} />}
+        {editing && editor({ slug: page.slug })}
+        {!editing && shown.status === 'loading' && <WikiLoading label="Loading the page" />}
+        {!editing && shown.status === 'failed' && <WikiLoadFailed what="The page" onRetry={retry} />}
+        {!editing && shown.status === 'ready' && <WikiMarkdown source={shown.markdown} context={context} editor={isEditor(session)} />}
       </Box>
       <WikiFooter />
     </Stack>

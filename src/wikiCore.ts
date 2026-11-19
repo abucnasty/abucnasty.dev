@@ -51,6 +51,8 @@ export interface WikiFile {
   size: number;
   /** `?v=<v>` makes the URL cacheable for good. */
   v: string;
+  /** Where to load it instead (an image just saved in the editor, not yet published). */
+  url?: string;
 }
 
 export interface WikiIndex {
@@ -136,6 +138,7 @@ export function wikiMarkdownUrl(slug: string): string {
 
 /** A file's URL on the vault host, cacheable for good. */
 export function wikiFileUrl(file: WikiFile): string {
+  if (file.url) return file.url;
   return `${WIKI_BASE}/files/${file.published.split('/').map(encodeURIComponent).join('/')}?v=${encodeURIComponent(file.v)}`;
 }
 

@@ -29,7 +29,13 @@ export function WikiLoadFailed({ what = 'The wiki', onRetry }: { what?: string; 
   );
 }
 
-export function WikiPageNotFound({ slug }: { slug: string }) {
+/** A title for a page at `slug`: its words, the first capitalised. */
+const titleFor = (slug: string) => {
+  const t = slug.replace(/-+/g, ' ').trim();
+  return t.charAt(0).toUpperCase() + t.slice(1);
+};
+
+export function WikiPageNotFound({ slug, editor = false }: { slug: string; editor?: boolean }) {
   return (
     <Stack spacing={2} data-wiki-state="unknown" sx={{ alignItems: 'flex-start' }}>
       <Typography variant="h3">Not found</Typography>
@@ -41,6 +47,11 @@ export function WikiPageNotFound({ slug }: { slug: string }) {
         <Button component={RouterLink} to={WIKI_ALL_ROUTE} variant="outlined">
           All pages
         </Button>
+        {editor && (
+          <Button component={RouterLink} to={`${WIKI_ALL_ROUTE}?new=${encodeURIComponent(titleFor(slug))}`} variant="outlined" data-wiki-create-missing>
+            Create this page
+          </Button>
+        )}
       </Stack>
     </Stack>
   );
