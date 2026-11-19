@@ -72,7 +72,8 @@ const MERMAID = [
   ].join('\n'),
   ['flowchart LR', '  A[Start --> ((B', '  this is not a diagram'].join('\n'),
   [
-    '%%{init: {"securityLevel": "loose", "htmlLabels": true, "dompurifyConfig": {"ADD_TAGS": ["script", "iframe"], "ADD_ATTR": ["onerror", "onload"]}}}%%',
+    // It also asks for the gradient look back (mermaid.cjs checks every diagram is flat).
+    '%%{init: {"securityLevel": "loose", "htmlLabels": true, "dompurifyConfig": {"ADD_TAGS": ["script", "iframe"], "ADD_ATTR": ["onerror", "onload"]}, "look": "neo", "flowchart": {"look": "neo"}, "themeVariables": {"useGradient": true, "dropShadow": "drop-shadow(1px 2px 2px red)"}}}%%',
     'flowchart TD',
     '  A["<img src=x onerror=window.__pwned=\'img\'>"] --> B["<script>window.__pwned=\'script\'</script>"]',
     '  B --> C["<a href=\'javascript:window.__pwned=1\'>link</a>"]',
