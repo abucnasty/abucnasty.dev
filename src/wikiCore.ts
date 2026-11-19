@@ -16,6 +16,8 @@ const WIKI_BASE = `${VAULT_ORIGIN}/wiki`;
 export const WIKI_HOME = 'home';
 /** The site's list of every page; no page may have this slug. */
 export const WIKI_ALL_ROUTE = '/wiki/all';
+/** Pages deleted in the last 90 days, for editors. */
+export const WIKI_DELETED_ROUTE = '/wiki/deleted';
 
 export interface WikiHeading {
   depth: number;
@@ -107,6 +109,11 @@ export function wikiRoute(slug: string): string {
   return slug === WIKI_HOME ? '/wiki' : `/wiki/${encodeURIComponent(slug)}`;
 }
 
+/** A page's history (/wiki/home/history for the front page). */
+export function wikiHistoryRoute(slug: string): string {
+  return `/wiki/${encodeURIComponent(slug)}/history`;
+}
+
 /** The drafts index, from the site's Worker: editors only (worker/wikiApi.ts). */
 export const WIKI_DRAFTS_INDEX_URL = '/api/wiki/drafts/index.json';
 
@@ -117,12 +124,14 @@ export function wikiDraftMarkdownUrl(slug: string): string {
 
 /**
  * The published index with the drafts added, marked `draft`, for an editor. A draft never
- * replaces a published page, and its former titles are dropped (they redirect nothing). Files are
- * the union: a draft's images are published on the vault host like any other.
+ * replaces a published page. A draft's former titles (a renamed draft) are kept: for an editor,
+ * its old address and `[[Old Title]]` links reach it, after any published page's (as the vault's
+ * CI resolves a draft's links). Files are the union: a draft's images are published on the vault
+ * host like any other.
  */
 export function mergeWikiDrafts(index: WikiIndex, drafts: WikiIndex): WikiIndex {
   const taken = new Set(index.pages.map((p) => p.slug));
-  const extra = drafts.pages.filter((p) => !taken.has(p.slug)).map((p) => ({ ...p, aliases: [], draft: true }));
+  const extra = drafts.pages.filter((p) => !taken.has(p.slug)).map((p) => ({ ...p, draft: true }));
   const have = new Set(index.files.map((f) => f.path));
   return {
     ...index,
@@ -146,16 +155,23 @@ export function findWikiPage(index: WikiIndex, slug: string): WikiPageMeta | und
   return index.pages.find((p) => p.slug === slug);
 }
 
-/** The published page an address belongs to by one of its former titles. */
+/** The first page `match` finds: published pages first, then drafts. */
+const publishedFirst = (index: WikiIndex, match: (p: WikiPageMeta) => boolean) =>
+  index.pages.find((p) => !p.draft && match(p)) ?? index.pages.find((p) => p.draft && match(p));
+
+/** The page an address belongs to by one of its former titles (a published page's, then a draft's). */
 export function findWikiAlias(index: WikiIndex, slug: string): WikiPageMeta | undefined {
-  return index.pages.find((p) => !p.draft && p.aliases.some((a) => wikiSlug(a) === slug));
+  return publishedFirst(index, (p) => p.aliases.some((a) => wikiSlug(a) === slug));
 }
 
-/** The page a link names, by title, then by former title, ignoring case; a path or ".md" may come with it. */
+/**
+ * The page a link names, by title, then by former title (a renamed page's old `[[links]]`),
+ * ignoring case; a path or ".md" may come with it.
+ */
 export function findWikiTarget(index: WikiIndex, target: string): WikiPageMeta | undefined {
   const name = target.slice(target.lastIndexOf('/') + 1);
   const key = titleKey(name.toLowerCase().endsWith('.md') ? name.slice(0, -3) : name);
-  return index.pages.find((p) => titleKey(p.title) === key) ?? index.pages.find((p) => p.aliases.some((a) => titleKey(a) === key));
+  return index.pages.find((p) => titleKey(p.title) === key) ?? publishedFirst(index, (p) => p.aliases.some((a) => titleKey(a) === key));
 }
 
 /** The pages grouped by folder: the top first, then folders by name. */

@@ -4,7 +4,12 @@
 // - App JWT: iat (60 s in the past, for clock drift), exp (at most 10 minutes; 9 here), iss = app id.
 // - POST /app/installations/{id}/access_tokens → { token, expires_at } (an hour), narrowed here to
 //   the vault repository and Contents: write.
-// - Git Data API: refs, commits, trees, blobs.
+// - Git Data API: refs, commits, trees (an entry with `sha: null` deletes that path), blobs.
+// - For history (wikiHistory.ts): GET /repos/{repo}/commits?sha=&path=&since=&per_page=&page= (a
+//   path's commits, newest first; it does not follow renames), GET /repos/{repo}/commits/{sha}
+//   (the files a commit changed, with status "added" | "removed" | "renamed" (+ previous_filename)
+//   | "modified" ...; up to 300 files) and GET /repos/{repo}/contents/{path}?ref= with the raw
+//   media type (a file's bytes at a commit; 404 when it is not there).
 // The private key may be PKCS#8 (BEGIN PRIVATE KEY) or the PKCS#1 GitHub hands out (BEGIN RSA
 // PRIVATE KEY): Web Crypto only imports PKCS#8, so a PKCS#1 key is wrapped first.
 // Pure apart from `fetch` and Web Crypto, so it is unit-tested under Node.
@@ -143,6 +148,24 @@ export async function installationToken(f: Fetch, c: GitHubAppConfig, cache: Tok
   return data.token;
 }
 
+/** A commit as the commits list gives it, reduced to what the history shows. */
+export interface ListedCommit {
+  sha: string;
+  parents: string[];
+  message: string;
+  /** The git author's name (for a site edit, the editor's display name); the email is never kept. */
+  author: string;
+  /** The author date, ISO 8601. */
+  date: string;
+}
+
+/** A file a commit changed. */
+export interface CommitFile {
+  filename: string;
+  status: string;
+  previous_filename?: string;
+}
+
 export interface TreeEntry {
   path: string;
   mode: string;
@@ -153,13 +176,16 @@ export interface TreeEntry {
 /** The Git Data API calls of a save, against one repository with one token. */
 export function gitData(f: Fetch, repo: string, token: string) {
   const base = `${GITHUB_API}/repos/${repo}`;
-  async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const res = await f(`${base}${path}`, {
+  async function send(method: string, path: string, body?: unknown, extra: Record<string, string> = {}): Promise<Response> {
+    return f(`${base}${path}`, {
       method,
-      headers: headers(`Bearer ${token}`, body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      headers: headers(`Bearer ${token}`, { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...extra }),
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
+  }
+  async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const res = await send(method, path, body);
     if (!res.ok) {
       const detail = (await res.json().catch(() => null)) as { message?: unknown } | null;
       const msg = typeof detail?.message === 'string' ? `: ${detail.message.slice(0, 200)}` : '';
@@ -180,7 +206,40 @@ export function gitData(f: Fetch, repo: string, token: string) {
       return b.encoding === 'base64' ? base64ToBytes(b.content) : enc.encode(b.content);
     },
     createBlob: async (bytes: Uint8Array) => (await call<{ sha: string }>('POST', '/git/blobs', { content: bytesToBase64(bytes), encoding: 'base64' })).sha,
-    createTree: async (baseTree: string, entries: Array<{ path: string; sha: string }>) =>
+    /** A commit's tree, parents, message and author (Git Data API). */
+    commit: async (sha: string) => {
+      const c = await call<{ tree: { sha: string }; parents: Array<{ sha: string }>; message: string; author: { name: string; date: string } }>('GET', `/git/commits/${sha}`);
+      return { tree: c.tree.sha, parents: c.parents.map((p) => p.sha), message: c.message, author: c.author.name, date: c.author.date };
+    },
+    /** Commits on `sha` (a branch or commit), newest first, optionally only those touching `path` or after `since`. */
+    commits: async (q: { sha: string; path?: string; since?: string; perPage: number; page?: number }): Promise<ListedCommit[]> => {
+      const params = new URLSearchParams({ sha: q.sha, per_page: String(q.perPage) });
+      if (q.path !== undefined) params.set('path', q.path);
+      if (q.since !== undefined) params.set('since', q.since);
+      if (q.page !== undefined) params.set('page', String(q.page));
+      type Raw = { sha: string; parents: Array<{ sha: string }>; commit: { message: string; author: { name: string; date: string } | null } };
+      const list = await call<Raw[]>('GET', `/commits?${params}`);
+      return list.map((c) => ({ sha: c.sha, parents: c.parents.map((p) => p.sha), message: c.commit.message, author: c.commit.author?.name ?? '', date: c.commit.author?.date ?? '' }));
+    },
+    /** The files a commit changed (the first 300, as GitHub lists them). */
+    commitFiles: async (sha: string): Promise<CommitFile[]> => {
+      const c = await call<{ files?: CommitFile[] }>('GET', `/commits/${sha}`);
+      return (c.files ?? []).map((x) => ({ filename: x.filename, status: x.status, ...(x.previous_filename ? { previous_filename: x.previous_filename } : {}) }));
+    },
+    /** A file's bytes at a commit, or null when the file is not there. */
+    fileAt: async (path: string, ref: string): Promise<Uint8Array | null> => {
+      const res = await send('GET', `/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`, undefined, { Accept: 'application/vnd.github.raw+json' });
+      if (res.status === 404) {
+        await res.body?.cancel();
+        return null;
+      }
+      if (!res.ok) {
+        await res.body?.cancel();
+        throw new GitHubError(`GET /contents: HTTP ${res.status}`, res.status);
+      }
+      return new Uint8Array(await res.arrayBuffer());
+    },
+    createTree: async (baseTree: string, entries: Array<{ path: string; sha: string | null }>) =>
       (await call<{ sha: string }>('POST', '/git/trees', { base_tree: baseTree, tree: entries.map((e) => ({ path: e.path, mode: '100644', type: 'blob', sha: e.sha })) })).sha,
     createCommit: async (c: { message: string; tree: string; parent: string; author: { name: string; email: string; date: string } }) =>
       (await call<{ sha: string }>('POST', '/git/commits', { message: c.message, tree: c.tree, parents: [c.parent], author: c.author })).sha,

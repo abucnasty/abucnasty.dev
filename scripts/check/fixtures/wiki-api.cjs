@@ -11,6 +11,11 @@
 // from the wiki fixture) and `save` (recorded, multipart body and all, in `asked.saves`; a save
 // whose summary is "force conflict" is answered 409 as when the page changed meanwhile).
 // Sign-out and "I understand" change the persona for the rest of the context, as the cookies would.
+//
+// History: `history?path=` (anyone for a published page, editors for a draft; How to Benchmark has
+// three edits across a rename), `version?path=&ref=` and `deleted` (editors), and the changes
+// `restore`, `rename`, `delete`, `undelete` (editors; recorded in `asked.changes` as { what, body }).
+// Restoring a deleted page whose title is taken without a new title is answered 409 title_taken.
 const { drafts, draftMarkdown, index, markdown } = require('./wiki.cjs');
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
@@ -32,6 +37,31 @@ function parts(req) {
   }
   return out;
 }
+
+const HOW_TO = 'wiki/Guides/How to Benchmark.md';
+const OLD_PATH = 'wiki/Guides/Benchmarking Guide.md';
+const sha = (c) => c.repeat(40);
+/** How to Benchmark's history: an edit on the site, a rename on the site, the owner's first version. */
+const HISTORY = [
+  { sha: sha('1'), date: '2026-11-17T18:20:00Z', author: 'Buc the Editor', summary: 'Explain the new flags', path: HOW_TO, site: true },
+  { sha: sha('2'), date: '2026-11-10T09:05:00Z', author: 'Buc the Editor', summary: 'Renamed Benchmarking Guide to How to Benchmark', path: HOW_TO, kind: 'renamed', from: OLD_PATH, site: true },
+  { sha: sha('3'), date: '2026-10-01T12:00:00Z', author: 'abucnasty', summary: 'sync edits from obsidian', path: OLD_PATH, site: false },
+];
+const pathOf = (p) => `wiki/${p.folder ? `${p.folder}/` : ''}${p.title}.md`;
+/** A page's file at a history commit. */
+function versionText(path, ref) {
+  const body = markdown['how-to-benchmark'];
+  if (path === HOW_TO && ref === sha('1')) return FRONTMATTER + body;
+  if (path === HOW_TO && ref === sha('2')) return FRONTMATTER + body.replace('## Prerequisites', '## Before you start');
+  if (path === OLD_PATH && ref === sha('3')) return body.replace('## Prerequisites', '## Before you start').replace(/\n\n[^\n]*$/, '\n');
+  const page = [...index.pages, ...drafts.pages].find((p) => pathOf(p) === path);
+  return page ? (markdown[page.slug] ?? draftMarkdown[page.slug] ?? '') : null;
+}
+const DELETED = [
+  { path: 'wiki/Guides/Old Notes.md', title: 'Old Notes', folder: 'Guides', commit: sha('4'), date: '2026-11-15T08:00:00Z', author: 'abucnasty', site: false, titleTaken: null },
+  { path: 'wiki/Setting Up Arch to Run Factorio.md', title: 'Setting Up Arch to Run Factorio', folder: '', commit: sha('5'), date: '2026-11-12T08:00:00Z', author: 'Buc the Editor', site: true, titleTaken: 'Setting Up Arch to Run Factorio' },
+];
+const slugOf = (title) => title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
 
 const USER = { userId: '80351110224678912', displayName: 'Buc the Editor', avatarUrl: 'https://cdn.discordapp.com/embed/avatars/0.png' };
 
@@ -55,6 +85,7 @@ async function install(context, base, persona = 'signed-out') {
   let who = persona;
   const asked = [];
   asked.saves = [];
+  asked.changes = [];
   await context.route(`${base}/api/wiki/**`, (route) => {
     const req = route.request();
     const path = new URL(req.url()).pathname.slice('/api/wiki/'.length);
@@ -102,6 +133,42 @@ async function install(context, base, persona = 'signed-out') {
         body: markdown[slug],
         draft: false,
       });
+    }
+    const url = new URL(req.url());
+    if (path === 'history' && req.method() === 'GET') {
+      const p = url.searchParams.get('path');
+      const published = index.pages.some((x) => pathOf(x) === p);
+      if (!published && !editor) return json(who === 'signed-out' ? 401 : 403, { error: 'not_editor', message: 'Sign in as a wiki editor.' });
+      const entries = p === HOW_TO ? HISTORY : [{ sha: sha('6'), date: '2026-09-01T10:00:00Z', author: 'abucnasty', summary: 'sync edits from obsidian', path: p, site: false }];
+      return json(200, { path: p, entries, truncated: false });
+    }
+    if (path === 'version' && req.method() === 'GET') {
+      if (!editor) return json(403, { error: 'not_editor' });
+      const text = versionText(url.searchParams.get('path'), url.searchParams.get('ref'));
+      return text === null ? json(404, { error: 'not_found' }) : route.fulfill({ status: 200, contentType: 'text/markdown; charset=utf-8', body: text });
+    }
+    if (path === 'deleted' && req.method() === 'GET') {
+      if (!editor) return json(who === 'signed-out' ? 401 : 403, { error: 'not_editor' });
+      return json(200, { since: '2026-08-20T00:00:00Z', partial: false, pages: DELETED });
+    }
+    if (['restore', 'rename', 'delete', 'undelete'].includes(path) && req.method() === 'POST') {
+      if (!editor) return json(who === 'signed-out' ? 401 : 403, { error: 'not_editor', message: "You're signed in, but you don't have wiki access." });
+      const body = JSON.parse(req.postData() ?? '{}');
+      asked.changes.push({ what: path, body, headers: req.headers() });
+      const title = /([^/]+)\.md$/.exec(body.path)[1];
+      const folder = body.path.split('/').slice(1, -1).join('/');
+      if (path === 'restore') {
+        const text = versionText(body.from, body.commit) ?? '';
+        return json(200, { ok: true, commit: sha('9'), path: body.path, slug: slugOf(title), title, folder, blob: sha('8'), frontmatter: FRONTMATTER, draft: false, body: text.startsWith('---') ? text.slice(FRONTMATTER.length) : text });
+      }
+      if (path === 'rename') {
+        return json(200, { ok: true, commit: sha('9'), path: `wiki/${body.folder ? `${body.folder}/` : ''}${body.title}.md`, slug: slugOf(body.title), title: body.title, folder: body.folder, blob: sha('8'), frontmatter: `---\naliases: [Benchmarking Guide, ${title}]\n---\n\n`, draft: false });
+      }
+      if (path === 'delete') return json(200, { ok: true, commit: sha('9'), path: body.path, slug: slugOf(title), title, draft: false });
+      const gone = DELETED.find((d) => d.path === body.path);
+      if (gone && gone.titleTaken && !body.title) return json(409, { error: 'title_taken', message: `There's already a page called "${gone.titleTaken}". Restore this one under a different title.` });
+      const t = body.title ?? title;
+      return json(200, { ok: true, commit: sha('9'), path: `wiki/${folder ? `${folder}/` : ''}${t}.md`, slug: slugOf(t), title: t, folder, blob: sha('8'), frontmatter: '', draft: false, body: `# ${t}\n\nRestored by the check.\n` });
     }
     if (path === 'save' && req.method() === 'POST') {
       if (!editor) return json(who === 'signed-out' ? 401 : 403, { error: 'not_editor', message: "You're signed in, but you don't have wiki access." });

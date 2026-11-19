@@ -1,5 +1,5 @@
 import { Suspense, lazy } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link as RouterLink, useSearchParams } from 'react-router-dom';
 import { Box, Button, Stack } from '@mui/material';
 import { ListRow, RowGroup } from '../components/ListRow';
 import { PageHeader } from '../components/PageHeader';
@@ -7,8 +7,9 @@ import { SectionHeader } from '../components/SectionHeader';
 import { DraftChip, WikiFooter, WikiSignInNotice } from '../components/WikiAccess';
 import { WikiLoadFailed, WikiLoading } from '../components/WikiStates';
 import { layout } from '../layout';
-import { useWikiIndex, wikiFolders, wikiRoute } from '../wiki';
+import { WIKI_DELETED_ROUTE, useWikiIndex, wikiFolders, wikiRoute } from '../wiki';
 import { isEditor, useWikiSession } from '../wikiAuth';
+import { useSavedPages, wasDeleted } from '../wikiSaved';
 
 // The "New page" dialog, for editors only: its own small chunk.
 const NewPageDialog = lazy(() => import('../components/WikiNewPage'));
@@ -17,7 +18,10 @@ const NEW_PARAM = 'new';
 
 /** /wiki/all: every published page (and, for an editor, every draft), grouped by its folder in the vault. */
 export function WikiAll() {
-  const state = useWikiIndex();
+  const loaded = useWikiIndex();
+  useSavedPages();
+  // Pages deleted in this visit are gone already, though the index still lists them for a minute.
+  const state = loaded.index ? { ...loaded, index: { ...loaded.index, pages: loaded.index.pages.filter((p) => !wasDeleted(p.slug)) } } : loaded;
   const session = useWikiSession();
   const [params, setParams] = useSearchParams();
   const editor = isEditor(session);
@@ -38,10 +42,17 @@ export function WikiAll() {
         title="All pages"
         meta={state.index ? meta : undefined}
         actions={
-          canCreate ? (
-            <Button size="small" variant="outlined" onClick={() => setParams({ [NEW_PARAM]: '' })} data-wiki-new>
-              New page
-            </Button>
+          editor ? (
+            <Stack direction="row" spacing={1}>
+              <Button component={RouterLink} to={WIKI_DELETED_ROUTE} size="small" variant="text" data-wiki-deleted-link>
+                Recently deleted
+              </Button>
+              {canCreate && (
+                <Button size="small" variant="outlined" onClick={() => setParams({ [NEW_PARAM]: '' })} data-wiki-new>
+                  New page
+                </Button>
+              )}
+            </Stack>
           ) : undefined
         }
       />

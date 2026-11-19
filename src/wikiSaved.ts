@@ -1,5 +1,6 @@
-// Pages an editor saved in this visit, shown as saved until the vault publishes them (about a
-// minute) and the next page load fetches the new index. Kept in memory only.
+// Pages an editor saved, restored, renamed or deleted in this visit, shown that way until the vault
+// publishes the change (about a minute) and the next page load fetches the new index. Kept in
+// memory only.
 import { useSyncExternalStore } from 'react';
 import type { WikiFile, WikiPageMeta } from './wikiCore';
 
@@ -16,17 +17,55 @@ export interface SavedPage {
 }
 
 const saved = new Map<string, SavedPage>();
+/** Pages renamed in this visit: old slug → new slug. */
+const moved = new Map<string, string>();
+/** Pages deleted in this visit, by slug. */
+const deleted = new Set<string>();
 const listeners = new Set<() => void>();
 let version = 0;
 
 export function rememberSaved(page: SavedPage): void {
   saved.set(page.meta.slug, page);
+  deleted.delete(page.meta.slug);
+  moved.delete(page.meta.slug);
+  bump();
+}
+
+export function savedPage(slug: string): SavedPage | undefined {
+  return deleted.has(slug) ? undefined : saved.get(slug);
+}
+
+function bump() {
   version++;
   for (const l of listeners) l();
 }
 
-export function savedPage(slug: string): SavedPage | undefined {
-  return saved.get(slug);
+/** A page was renamed: its old address goes to the new one for the rest of the visit. */
+export function rememberMoved(from: string, page: SavedPage): void {
+  deleted.delete(page.meta.slug);
+  saved.set(page.meta.slug, page);
+  if (from !== page.meta.slug) {
+    moved.set(from, page.meta.slug);
+    saved.delete(from);
+  }
+  bump();
+}
+
+/** Where a page renamed in this visit went, if it was. */
+export function movedTo(slug: string): string | undefined {
+  return moved.get(slug);
+}
+
+/** A page was deleted: it shows as deleted for the rest of the visit. */
+export function rememberDeleted(slug: string): void {
+  deleted.add(slug);
+  saved.delete(slug);
+  bump();
+}
+
+/** Whether the page was deleted in this visit. */
+export function wasDeleted(slug: string): boolean {
+  return deleted.has(slug);
 }
 
 /** Re-renders when a page is saved. */

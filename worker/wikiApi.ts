@@ -12,6 +12,23 @@
 //                                              the role is looked up live, never cached; see wikiSave.ts)
 //   GET  /api/wiki/image/<oid>                 an image just saved, from the LFS bucket, until the vault
 //                                              publishes it (editors only)
+//   GET  /api/wiki/history?path=<path>         a page's edits, newest first, across renames: anyone
+//                                              for a published page, editors for any other (drafts)
+//   GET  /api/wiki/version?path=&ref=<sha>     a page's file as it was at a commit (editors only)
+//   GET  /api/wiki/deleted                     pages deleted in the last 90 days (editors only)
+//   POST /api/wiki/restore|rename|delete|undelete  change a page (editors only, same-origin, role
+//                                              looked up live, like a save; see wikiPages.ts)
+//
+// History, versions and the deleted list are read from GitHub (wikiHistory.ts) with the app's
+// token and kept in the Cache API, so readers cannot spend the app's API budget:
+//   - a page's history: HISTORY_SECONDS per path (dropped when the site changes the page). One
+//     commits-list call per path the page has had, plus one call for a commit's file list where
+//     the oldest commit on a path was not made by the site (to see whether it was a rename);
+//     file lists are kept for good (a commit never changes). A page never renamed: 1-2 calls.
+//   - a version: kept for good (2 per diff the first time it is opened, then none).
+//   - recently deleted: HISTORY_SECONDS. One call per 100 commits on wiki/ in 90 days, one per
+//     commit not made by the site that is not cached yet (at most MAX_FILE_LISTS per view), and 4
+//     for main's wiki tree (what is back).
 //
 // Sessions are signed cookies (session.ts), 30 days per device, with no server-side store. The
 // Discord access token is used once in the callback (to read who signed in) and then dropped.
@@ -52,13 +69,23 @@ import {
   verifyState,
   type Session,
 } from './session.ts';
-import { editingState, lfsKey, readSource, save, type EditingState, type SaveDeps, type SaveEnv } from './wikiSave.ts';
+import { editingRefusal, editingState, git, lfsKey, readSource, readWiki, save, VAULT_BRANCH, type EditingState, type SaveDeps, type SaveEnv } from './wikiSave.ts';
+import { changePage, type PageAction, type PageDeps } from './wikiPages.ts';
+import { pageHistory, RECENT_DAYS, recentlyDeleted, type HistoryGitHub } from './wikiHistory.ts';
+import type { CommitFile } from './github.ts';
+import { normaliseWikiIndex, type WikiIndex } from '../src/wikiCore.ts';
+import { isPagePath, newPagePath, pageTitle, titleClash } from '../src/wikiSource.ts';
 
 export const WIKI_API = '/api/wiki/';
 /** R2 keys of the drafts in the catalog bucket (written by the vault's CI; the vault host never serves them). */
 export const DRAFTS_INDEX_KEY = 'wiki-drafts/index.json';
 const draftKey = (slug: string) => `wiki-drafts/${slug}.md`;
 export const ACCESS_CACHE_SECONDS = 300;
+/** How long a page's history and the deleted list are kept. */
+export const HISTORY_SECONDS = 60;
+/** Commit file lists fetched (not cached) per recently-deleted view at most. */
+export const MAX_FILE_LISTS = 40;
+const FOREVER_SECONDS = 365 * 24 * 3600;
 const DEFAULT_RETURN = '/wiki';
 /** Query parameter the site reads after a sign-in that did not complete (see src/wikiAuth.ts). */
 export const SIGNIN_PARAM = 'wiki-signin';
@@ -78,6 +105,7 @@ export interface WikiEnv extends SaveEnv {
 export interface AccessCache {
   match(key: string): Promise<Response | undefined>;
   put(key: string, res: Response): Promise<void>;
+  delete?(key: string): Promise<boolean>;
 }
 
 export interface WikiDeps {
@@ -89,6 +117,8 @@ export interface WikiDeps {
   tokens?: SaveDeps['tokens'];
   takeSlot?: SaveDeps['takeSlot'];
   waitUntil?: SaveDeps['waitUntil'];
+  /** The published wiki index (from the vault host), or null when it can't be read. */
+  wikiIndex?: () => Promise<WikiIndex | null>;
 }
 
 /** What `me` answers. No secrets: ids, a name and a CDN URL. */
@@ -338,6 +368,30 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
     return { session, access: a };
   }
 
+  const keyOf = (kind: string, ...parts: string[]) => `${new URL(env.SITE_URL).origin}/api/wiki/__${kind}/${parts.map(encodeURIComponent).join('/')}`;
+  const DELETED_KEY = keyOf('deleted', 'list');
+
+  async function cached<T>(key: string, seconds: number, build: () => Promise<T>): Promise<T> {
+    const hit = deps.cache ? await deps.cache.match(key).catch(() => undefined) : undefined;
+    if (hit) {
+      const v = (await hit.json().catch(() => undefined)) as T | undefined;
+      if (v !== undefined) return v;
+    }
+    const v = await build();
+    if (deps.cache) {
+      const res = new Response(JSON.stringify(v), { headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${seconds}` } });
+      await deps.cache.put(key, res).catch(() => {});
+    }
+    return v;
+  }
+
+  /** Pages the site just changed: their history (and the deleted list) are read afresh. */
+  function changed(paths: string[]) {
+    if (!deps.cache?.delete) return;
+    const drop = Promise.all([DELETED_KEY, ...paths.map((p) => keyOf('history', p))].map((k) => deps.cache!.delete!(k).catch(() => false)));
+    if (deps.waitUntil) deps.waitUntil(drop);
+  }
+
   const saveDeps: SaveDeps = {
     fetch: deps.fetch,
     now: deps.now,
@@ -345,7 +399,123 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
     takeSlot: deps.takeSlot ?? (() => Promise.reject(new Error('no rate limiter'))),
     waitUntil: deps.waitUntil,
     log,
+    changed,
   };
+
+  async function publishedIndex(): Promise<WikiIndex | null> {
+    try {
+      return (await deps.wikiIndex?.()) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function draftsIndex(): Promise<WikiIndex | null> {
+    try {
+      const text = await draftsIndexText();
+      return text ? normaliseWikiIndex(JSON.parse(text)) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Former titles of every page (published and drafts) but the one with `exceptSlug`. */
+  async function aliases(exceptSlug: string | null): Promise<string[]> {
+    const [pub, drafts] = await Promise.all([publishedIndex(), draftsIndex()]);
+    return [...(pub?.pages ?? []), ...(drafts?.pages ?? [])].filter((p) => p.slug !== exceptSlug).flatMap((p) => p.aliases);
+  }
+
+  const pageDeps: PageDeps = { ...saveDeps, aliases };
+
+  /** The GitHub calls the history makes; commit file lists come from the cache when they can. */
+  function historyGitHub(g: Awaited<ReturnType<typeof git>>, misses = { n: 0 }): HistoryGitHub {
+    return {
+      commits: (q) => g.commits(q),
+      commitFiles: async (sha) => {
+        const key = keyOf('files', sha);
+        const hit = deps.cache ? await deps.cache.match(key).catch(() => undefined) : undefined;
+        const v = hit ? ((await hit.json().catch(() => undefined)) as CommitFile[] | undefined) : undefined;
+        if (v) return v;
+        misses.n++;
+        return cached(key, FOREVER_SECONDS, () => g.commitFiles(sha));
+      },
+    };
+  }
+
+  const READ_FAILED = "Couldn't read the history from GitHub. Try again in a minute.";
+  const notSetUp = () => failure(503, 'not_configured', "Wiki history isn't set up on the site yet.");
+
+  async function history(request: Request, url: URL): Promise<Response> {
+    const path = url.searchParams.get('path') ?? '';
+    if (!isPagePath(path)) return failure(404, 'not_found', 'No such page.');
+    const pub = await publishedIndex();
+    const published = !!pub?.pages.some((p) => newPagePath(p.folder, p.title) === path);
+    // Anything but a published page (a draft, a deleted page) is for editors only.
+    if (!published) {
+      const who = await requireEditor(request, true, "to see this page's history");
+      if (who instanceof Response) return who;
+    }
+    if (editingState(env) === 'unavailable') return notSetUp();
+    try {
+      const h = await cached(keyOf('history', path), HISTORY_SECONDS, async () => pageHistory(historyGitHub(await git(env, saveDeps)), path, VAULT_BRANCH));
+      return json(200, h, published ? { 'Cache-Control': `public, max-age=${HISTORY_SECONDS}`, 'X-Content-Type-Options': 'nosniff' } : PRIVATE);
+    } catch (err) {
+      log(`wiki history: ${err instanceof Error ? err.message : String(err)}`);
+      return failure(502, 'github_error', READ_FAILED, {}, published ? NO_STORE : PRIVATE);
+    }
+  }
+
+  async function version(request: Request, url: URL): Promise<Response> {
+    const who = await requireEditor(request, true, 'to see older versions');
+    if (who instanceof Response) return who;
+    const path = url.searchParams.get('path') ?? '';
+    const ref = url.searchParams.get('ref') ?? '';
+    if (!isPagePath(path) || !/^[0-9a-f]{40}$/.test(ref)) return failure(404, 'not_found', 'No such version.', {}, PRIVATE);
+    if (editingState(env) === 'unavailable') return notSetUp();
+    try {
+      const v = await cached(keyOf('version', path, ref), FOREVER_SECONDS, async () => {
+        const bytes = await (await git(env, saveDeps)).fileAt(path, ref);
+        return { text: bytes === null ? null : new TextDecoder().decode(bytes).replace(/\r\n?/g, '\n') };
+      });
+      if (v.text === null) return failure(404, 'not_found', "The page wasn't there at that commit.", {}, PRIVATE);
+      return new Response(v.text, { headers: { 'Content-Type': 'text/markdown; charset=utf-8', ...PRIVATE } });
+    } catch (err) {
+      log(`wiki version: ${err instanceof Error ? err.message : String(err)}`);
+      return failure(502, 'github_error', "Couldn't read that version from GitHub. Try again in a minute.", {}, PRIVATE);
+    }
+  }
+
+  async function deleted(request: Request): Promise<Response> {
+    const who = await requireEditor(request, true, 'to see deleted pages');
+    if (who instanceof Response) return who;
+    if (editingState(env) === 'unavailable') return notSetUp();
+    try {
+      const list = await cached(DELETED_KEY, HISTORY_SECONDS, async () => {
+        const g = await git(env, saveDeps);
+        const misses = { n: 0 };
+        const since = new Date(deps.now() - RECENT_DAYS * 24 * 3600 * 1000).toISOString();
+        const { files } = await readWiki(g);
+        const live = new Set([...files.keys()]);
+        const found = await recentlyDeleted(historyGitHub(g, misses), VAULT_BRANCH, since, live, () => misses.n < MAX_FILE_LISTS);
+        const titles = [...files.keys()].filter(isPagePath).map(pageTitle);
+        const taken = [...titles, ...(await aliases(null))];
+        return { since, partial: found.partial, pages: found.pages.map((p) => ({ ...p, titleTaken: titleClash(p.title, taken) })) };
+      });
+      return json(200, list, PRIVATE);
+    } catch (err) {
+      log(`wiki deleted: ${err instanceof Error ? err.message : String(err)}`);
+      return failure(502, 'github_error', READ_FAILED, {}, PRIVATE);
+    }
+  }
+
+  /** A change to a page: same-origin, the emergency stop, then the editor role looked up live. */
+  async function change(request: Request, action: PageAction): Promise<Response> {
+    if (!sameOrigin(request)) return failure(403, 'cross_origin', 'Change pages from the site itself.');
+    if (editingState(env) === 'read-only') return editingRefusal(env)!;
+    const who = await requireEditor(request, false, 'to change pages');
+    if (who instanceof Response) return who;
+    return changePage(env, pageDeps, request, { id: who.session.sub, displayName: who.access.displayName }, action);
+  }
 
   async function source(request: Request, url: URL): Promise<Response> {
     const who = await requireEditor(request, true, 'to edit pages');
@@ -431,6 +601,17 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
         return method === 'GET' ? source(request, url) : only('GET');
       case 'save':
         return method === 'POST' ? saveRequest(request) : only('POST');
+      case 'history':
+        return method === 'GET' ? history(request, url) : only('GET');
+      case 'version':
+        return method === 'GET' ? version(request, url) : only('GET');
+      case 'deleted':
+        return method === 'GET' ? deleted(request) : only('GET');
+      case 'restore':
+      case 'rename':
+      case 'delete':
+      case 'undelete':
+        return method === 'POST' ? change(request, path) : only('POST');
     }
     if (path.startsWith('image/')) return method === 'GET' ? image(request, path.slice('image/'.length)) : only('GET');
     if (path.startsWith('drafts/')) return method === 'GET' ? drafts(request, path.slice('drafts/'.length)) : only('GET');

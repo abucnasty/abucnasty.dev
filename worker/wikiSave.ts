@@ -88,6 +88,8 @@ export interface SaveDeps {
   /** Run work after the response (ctx.waitUntil); awaited inline when absent. */
   waitUntil?: (p: Promise<unknown>) => void;
   log: (message: string) => void;
+  /** Pages just committed (paths): their cached history is out of date. */
+  changed?: (paths: string[]) => void;
 }
 
 export interface Editor {
@@ -111,14 +113,14 @@ const appConfig = (env: SaveEnv): Partial<GitHubAppConfig> => ({
 });
 
 const NO_STORE = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
-const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
+export const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', ...NO_STORE, ...headers } });
-const failure = (status: number, error: string, message: string, extra: object = {}, headers: Record<string, string> = {}) =>
+export const failure = (status: number, error: string, message: string, extra: object = {}, headers: Record<string, string> = {}) =>
   json(status, { error, message, ...extra }, headers);
 
 export const READ_ONLY_MESSAGE = 'Wiki editing is paused for now, so nothing was saved. Keep a copy of your text and try again later.';
 const UNAVAILABLE_MESSAGE = "Wiki editing isn't set up on the site yet, so nothing was saved.";
-const GITHUB_DOWN = "Couldn't reach GitHub to save the page. Nothing was saved; try again in a minute.";
+export const GITHUB_DOWN = "Couldn't reach GitHub to save the page. Nothing was saved; try again in a minute.";
 
 /** A refusal when saving is not possible, or null. */
 export function editingRefusal(env: SaveEnv): Response | null {
@@ -128,14 +130,14 @@ export function editingRefusal(env: SaveEnv): Response | null {
   return null;
 }
 
-async function git(env: SaveEnv, deps: SaveDeps): Promise<GitData> {
+export async function git(env: SaveEnv, deps: SaveDeps): Promise<GitData> {
   const c = appConfig(env) as GitHubAppConfig;
   const token = await installationToken(deps.fetch, c, deps.tokens, deps.now());
   return gitData(deps.fetch, c.repo, token);
 }
 
 /** main's head, its tree and every entry under wiki/ by full path. */
-async function readWiki(g: GitData): Promise<{ head: string; root: string; files: Map<string, TreeEntry> }> {
+export async function readWiki(g: GitData): Promise<{ head: string; root: string; files: Map<string, TreeEntry> }> {
   const head = await g.headOf(VAULT_BRANCH);
   const root = await g.commitTree(head);
   const wiki = (await g.tree(root)).find((e) => e.path === WIKI_ROOT && e.type === 'tree');
@@ -145,7 +147,7 @@ async function readWiki(g: GitData): Promise<{ head: string; root: string; files
 }
 
 /** Pages in a wiki listing, as the vault counts them. */
-function pagesIn(files: Map<string, TreeEntry>): string[] {
+export function pagesIn(files: Map<string, TreeEntry>): string[] {
   return [...files.values()].filter((e) => e.type === 'blob' && isPagePath(`${WIKI_ROOT}/${e.path}`)).map((e) => `${WIKI_ROOT}/${e.path}`);
 }
 
@@ -224,7 +226,37 @@ export function lfsPointer(oid: string, size: number): string {
 /** The LFS bucket's key of an object (as _tools/lfs-worker in the vault stores them). */
 export const lfsKey = (oid: string) => `${oid.slice(0, 2)}/${oid.slice(2, 4)}/${oid}`;
 
-const oneLine = (s: string) => s.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+export const oneLine = (s: string) => s.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** The last line of every site commit's message body: who saved it (the author name is the same). */
+const SITE_LINE = / via abucnasty\.dev$/m;
+/** Whether a commit was made by the site (its message says "Wiki edit by ... via abucnasty.dev"). */
+export const isSiteCommit = (message: string) => SITE_LINE.test(message);
+
+/**
+ * A site commit's message: the subject, the line naming the editor, then any trailers (a last
+ * paragraph of `Key: value` lines, as git reads trailers), e.g. `Wiki-Renamed-From: wiki/Old.md`.
+ */
+export function commitMessage(subject: string, editor: { author: string; id: string }, trailers: string[] = []): string {
+  return `${subject}\n\nWiki edit by ${editor.author} (Discord ${editor.id}) via abucnasty.dev${trailers.length ? `\n\n${trailers.join('\n')}` : ''}`;
+}
+
+/** The commit author name for an editor: their display name on one line. */
+export const authorName = (editor: Editor) => oneLine(editor.displayName) || 'Wiki editor';
+
+/** Take one of the editor's write slots (rateLimit.ts): null when taken, else the refusal. */
+export async function takeWriteSlot(deps: SaveDeps, editor: Editor, what = 'saved'): Promise<Response | null> {
+  let slot: Slot;
+  try {
+    slot = await deps.takeSlot(editor.id);
+  } catch (err) {
+    deps.log(`wiki write: rate limiter: ${err instanceof Error ? err.message : String(err)}`);
+    return failure(503, 'unavailable', "Couldn't do that right now. Nothing was changed; try again in a minute.");
+  }
+  if (slot.ok) return null;
+  const minutes = Math.ceil(slot.retryAfter / 60);
+  return failure(429, 'rate_limited', `You've ${what} a lot in the last few minutes. Wait ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}, then try again; your text is still here.`, { retryAfter: slot.retryAfter }, { 'Retry-After': String(slot.retryAfter) });
+}
 
 /** POST /api/wiki/save, for an editor whose role was just checked. */
 export async function save(env: SaveEnv, deps: SaveDeps, request: Request, editor: Editor): Promise<Response> {
@@ -301,21 +333,12 @@ export async function save(env: SaveEnv, deps: SaveDeps, request: Request, edito
   }
 
   // --- The rate limit ----------------------------------------------------------------------
-  let slot: Slot;
-  try {
-    slot = await deps.takeSlot(editor.id);
-  } catch (err) {
-    deps.log(`wiki save: rate limiter: ${err instanceof Error ? err.message : String(err)}`);
-    return failure(503, 'unavailable', "Couldn't save right now. Nothing was saved; try again in a minute.");
-  }
-  if (!slot.ok) {
-    const minutes = Math.ceil(slot.retryAfter / 60);
-    return failure(429, 'rate_limited', `You've saved a lot in the last few minutes. Wait ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}, then save again; your text is still here.`, { retryAfter: slot.retryAfter }, { 'Retry-After': String(slot.retryAfter) });
-  }
+  const limited = await takeWriteSlot(deps, editor);
+  if (limited) return limited;
 
   // --- GitHub ------------------------------------------------------------------------------
-  const author = oneLine(editor.displayName) || 'Wiki editor';
-  const message = `${summary}\n\nWiki edit by ${author} (Discord ${editor.id}) via abucnasty.dev`;
+  const author = authorName(editor);
+  const message = commitMessage(summary, { author, id: editor.id });
   const pageBytes = new TextEncoder().encode(text);
   try {
     const g = await git(env, deps);
@@ -371,6 +394,7 @@ export async function save(env: SaveEnv, deps: SaveDeps, request: Request, edito
       }
 
       // --- Saved: announce ----------------------------------------------------------------
+      deps.changed?.([path]);
       const slug = wikiSlug(title);
       if (!req.draft) {
         const announce = announceSave(env, deps, { title, url: `${env.SITE_URL.replace(/\/+$/, '')}${wikiRoute(slug)}`, summary, editor: author, created: creating });
@@ -399,7 +423,7 @@ export async function save(env: SaveEnv, deps: SaveDeps, request: Request, edito
   }
 }
 
-async function announceSave(env: SaveEnv, deps: SaveDeps, edit: Parameters<typeof announceEdit>[1]['edit']): Promise<void> {
+export async function announceSave(env: SaveEnv, deps: SaveDeps, edit: Parameters<typeof announceEdit>[1]['edit']): Promise<void> {
   if (!env.DISCORD_BOT_TOKEN || !env.WIKI_ANNOUNCE_CHANNEL_ID) {
     deps.log('wiki announce: DISCORD_BOT_TOKEN or WIKI_ANNOUNCE_CHANNEL_ID is not set');
     return;

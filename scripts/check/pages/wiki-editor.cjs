@@ -3,7 +3,9 @@
 // pastes an image, switches modes, and saves (the request is checked: path, base blob, frontmatter
 // as loaded, body, image); a conflict keeps the text with "Copy my text"; switching modes without
 // changes keeps the text exactly; links edited, added and removed in visual mode; a new page from
-// /wiki/all, and one in a new folder; ```mermaid blocks drawn live in visual mode; phones.
+// /wiki/all, and one in a new folder; ```mermaid blocks drawn live in visual mode; phones. Then the
+// page history (readers: the list; editors: a diff and restore), rename, delete and recently
+// deleted, each request checked.
 const { FRONTMATTER } = require('../fixtures/wiki-api.cjs');
 const { MERMAID } = require('../fixtures/wiki.cjs');
 
@@ -365,5 +367,142 @@ module.exports = {
     const over = await phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect('phone: the editor types and has no sideways scroll', (await ppm.innerText()).includes('Typed on a phone.') && over <= 0, `overflow ${over}px`);
     await shot(phone, 'wiki-editor-visual-phone');
+
+    await historyAndPages({ open, goto, expect, shot, requests, wikiApiCalls });
   },
 };
+
+const DIFF_CHUNK = /\/assets\/WikiDiff-[^/]*\.js$/;
+const ACTIONS_CHUNK = /\/assets\/WikiPageActions-[^/]*\.js$/;
+const sha = (c) => c.repeat(40);
+
+/**
+ * History, restore, rename, delete and recently deleted: readers see the list only; editors see a
+ * diff, restore a version, rename, delete (with a confirm step) and restore deleted pages. Each
+ * change's request is checked.
+ */
+async function historyAndPages({ open, goto, expect, shot, requests, wikiApiCalls }) {
+  const main = (page) => page.locator('main');
+  const changes = (page, what) => wikiApiCalls(page).changes.filter((c) => c.what === what);
+
+  // A reader: a History link, no page menu; the list without diffs or restore; no editor code.
+  const reader = await open('/wiki/how-to-benchmark', 'desktop');
+  expect('reader: a History link on the page', (await main(reader).locator('[data-wiki-history-link]').count()) === 1);
+  expect('reader: no page menu (rename, delete)', (await main(reader).locator('[data-wiki-page-menu]').count()) === 0);
+  await main(reader).locator('[data-wiki-history-link]').click();
+  const entries = main(reader).locator('[data-wiki-history-entry]');
+  await entries.first().waitFor({ timeout: 5000 }).catch(() => {});
+  const readerText = await main(reader).innerText();
+  expect('reader: /wiki/<slug>/history lists the edits, newest first, with names and the rename', new URL(reader.url()).pathname === '/wiki/how-to-benchmark/history' && (await entries.count()) === 3 && /Explain the new flags[\s\S]*Renamed from Benchmarking Guide[\s\S]*abucnasty/.test(readerText), readerText.slice(0, 400));
+  expect('reader: no "Changes" or "Restore this version", and no diff or page-menu code', (await main(reader).locator('[data-wiki-show-diff], [data-wiki-restore-version]').count()) === 0 && !requests(reader).some((u) => DIFF_CHUNK.test(u) || ACTIONS_CHUNK.test(u)));
+  expect('reader: no emails in the history', !/@/.test(readerText));
+  await goto(reader, '/wiki/benchmark-checklist/history');
+  await main(reader).locator('[data-wiki-state="unknown"]').waitFor({ timeout: 5000 }).catch(() => {});
+  expect("reader: a draft's history is a page that does not exist", /No wiki page at "benchmark-checklist"/.test(await main(reader).innerText()) && !requests(reader).some((u) => u.includes('/api/wiki/history') && u.includes('Checklist')));
+  await shot(reader, 'wiki-history-reader-desktop');
+
+  // An editor: a diff of the rename edit, side by side, then restore that version.
+  const ed = await open('/wiki/how-to-benchmark/history', 'desktop', { wiki: 'editor' });
+  const row = main(ed).locator(`[data-wiki-history-entry="${sha('2')}"]`);
+  await row.waitFor({ timeout: 5000 }).catch(() => {});
+  expect('editor: "Changes" on every edit, "Restore this version" on all but the current one', (await main(ed).locator('[data-wiki-show-diff]').count()) === 3 && (await main(ed).locator('[data-wiki-restore-version]').count()) === 2);
+  await row.locator('[data-wiki-show-diff]').click();
+  const diff = row.locator('[data-wiki-diff]');
+  await diff.locator('.cm-mergeView').waitFor({ timeout: 10000 }).catch(() => {});
+  const diffText = await diff.innerText().catch(() => '');
+  // The rename added the old title to the frontmatter; unchanged stretches are folded.
+  expect('editor: the diff shows both versions side by side, the change marked, the rest folded', (await diff.getAttribute('data-wiki-diff').catch(() => null)) === 'side-by-side' && (await diff.locator('.cm-merge-b .cm-changedLine').count()) > 0 && diffText.includes('aliases: [Benchmarking Guide]') && /\d+ unchanged lines/.test(diffText), diffText.slice(0, 200));
+  expect('editor: the versions before and after the edit were read (across the rename)', wikiApiCalls(ed).some((c) => c.startsWith('GET version')) && requests(ed).some((u) => u.includes('version?path=wiki%2FGuides%2FBenchmarking%20Guide.md&ref=' + sha('3'))) && requests(ed).some((u) => DIFF_CHUNK.test(u)));
+  await shot(ed, 'wiki-history-diff-desktop');
+  await row.locator('[data-wiki-restore-version]').click();
+  await ed.locator('[data-wiki-restore-dialog] [data-wiki-restore-confirm]').click();
+  await main(ed).locator('[data-wiki-restored]').waitFor({ timeout: 5000 }).catch(() => {});
+  const restored = changes(ed, 'restore')[0];
+  expect('restore: one same-origin POST with the page, the blob it is now, the commit and its path then', restored && restored.body.path === 'wiki/Guides/How to Benchmark.md' && restored.body.base === sha('b') && restored.body.commit === sha('2') && restored.body.from === 'wiki/Guides/How to Benchmark.md' && /application\/json/.test(restored.headers['content-type']), JSON.stringify(restored && restored.body));
+  expect('restore: "Restored as a new edit"', /Restored as a new edit/.test(await main(ed).innerText()));
+  await main(ed).locator('[data-wiki-restored] a, [data-wiki-restored] button', { hasText: 'View the page' }).click();
+  await main(ed).locator('h2', { hasText: 'Before you start' }).waitFor({ timeout: 5000 }).catch(() => {});
+  expect('restore: the page shows the restored text at once', (await main(ed).locator('h2', { hasText: 'Before you start' }).count()) === 1);
+
+  // Rename: a taken title is refused in the dialog; the rename's request; the page at its new address.
+  const rn = await open('/wiki/how-to-benchmark', 'desktop', { wiki: 'editor' });
+  await main(rn).locator('[data-wiki-page-menu]').waitFor({ timeout: 5000 }).catch(() => {});
+  await main(rn).locator('[data-wiki-page-menu]').click();
+  await rn.locator('[data-wiki-rename]').click();
+  const title = rn.locator('[data-wiki-rename-title]');
+  await title.fill('Setting Up Arch to Run Factorio');
+  expect('rename: a taken title is refused', await rn.locator('[data-wiki-rename-confirm]').isDisabled());
+  await title.fill('Benchmarking 101');
+  await rn.locator('[data-wiki-rename-confirm]').click();
+  await rn.waitForURL('**/wiki/benchmarking-101', { timeout: 5000 }).catch(() => {});
+  const renamed = changes(rn, 'rename')[0];
+  expect('rename: the page, its blob, the new title and the folder', renamed && renamed.body.path === 'wiki/Guides/How to Benchmark.md' && renamed.body.base === sha('b') && renamed.body.title === 'Benchmarking 101' && renamed.body.folder === 'Guides', JSON.stringify(renamed && renamed.body));
+  await main(rn).locator('[data-wiki-saved]').waitFor({ timeout: 5000 }).catch(() => {});
+  expect('rename: the page opens at its new address with a notice', new URL(rn.url()).pathname === '/wiki/benchmarking-101' && /Renamed\./.test(await main(rn).innerText()) && (await main(rn).locator('h1').innerText()) === 'Benchmarking 101', (await main(rn).innerText()).slice(0, 300));
+  await rn.evaluate(() => { history.pushState(null, '', '/wiki/how-to-benchmark'); dispatchEvent(new PopStateEvent('popstate')); });
+  await rn.waitForURL('**/wiki/benchmarking-101', { timeout: 5000 }).catch(() => {});
+  expect('rename: the old address leads to the new one', new URL(rn.url()).pathname === '/wiki/benchmarking-101');
+
+  // Home has no rename or delete; an editor's old draft title reaches the draft.
+  const home = await open('/wiki', 'desktop', { wiki: 'editor' });
+  await main(home).locator('[data-wiki-page-menu]').waitFor({ timeout: 5000 }).catch(() => {});
+  expect('Home: the page menu is off', await main(home).locator('[data-wiki-page-menu]').isDisabled());
+  await goto(home, '/wiki/old-checklist');
+  await home.waitForURL('**/wiki/benchmark-checklist', { timeout: 5000 }).catch(() => {});
+  expect("editor: a renamed draft's old address leads to it", new URL(home.url()).pathname === '/wiki/benchmark-checklist');
+
+  // Delete, with a confirm step.
+  const del = await open('/wiki/setting-up-arch-to-run-factorio', 'desktop', { wiki: 'editor' });
+  await main(del).locator('[data-wiki-page-menu]').click();
+  await del.locator('[data-wiki-delete]').click();
+  expect('delete: asks first, nothing sent yet', (await del.locator('[data-wiki-delete-dialog]').count()) === 1 && changes(del, 'delete').length === 0);
+  await del.locator('[data-wiki-delete-reason]').fill('Merged into the guide');
+  await del.locator('[data-wiki-delete-confirm]').click();
+  await main(del).locator('[data-wiki-deleted-notice]').waitFor({ timeout: 5000 }).catch(() => {});
+  const deleted = changes(del, 'delete')[0];
+  expect('delete: the page, its blob and the reason', deleted && deleted.body.path === 'wiki/Guides/Setting Up Arch to Run Factorio.md' && deleted.body.base === sha('c') && deleted.body.summary === 'Merged into the guide', JSON.stringify(deleted && deleted.body));
+  expect('delete: "Deleted", with a way to Recently deleted', (await main(del).locator('[data-wiki-deleted-notice]').count()) === 1);
+  await main(del).getByRole('link', { name: 'All pages' }).click();
+  await main(del).locator('[data-wiki-folder]').first().waitFor({ timeout: 5000 }).catch(() => {});
+  expect('delete: the page is gone from All pages', !(await main(del).innerText()).includes('Setting Up Arch to Run Factorio'));
+
+  // Recently deleted: listed with who and when; restore one; one whose title is taken asks for a new title.
+  await main(del).locator('[data-wiki-deleted-link]').click();
+  const gone = main(del).locator('[data-wiki-deleted-page]');
+  await gone.first().waitFor({ timeout: 5000 }).catch(() => {});
+  const goneText = await main(del).innerText();
+  expect('recently deleted: the pages, who deleted them, and a taken title', (await gone.count()) === 2 && /Old Notes[\s\S]*deleted by abucnasty/.test(goneText) && /has its title now/.test(goneText), goneText.slice(0, 400));
+  await gone.nth(0).locator('[data-wiki-undelete]').click();
+  await del.locator('[data-wiki-undelete-confirm]').click();
+  await main(del).locator('[data-wiki-undeleted]').waitFor({ timeout: 5000 }).catch(() => {});
+  const undeleted = changes(del, 'undelete')[0];
+  expect('restore deleted: the path and the commit that deleted it', undeleted && undeleted.body.path === 'wiki/Guides/Old Notes.md' && undeleted.body.commit === sha('4') && undeleted.body.title === undefined, JSON.stringify(undeleted && undeleted.body));
+  expect('restore deleted: "Restored Old Notes"', /Restored Old Notes/.test(await main(del).innerText()));
+  await gone.nth(1).locator('[data-wiki-undelete]').click();
+  const newTitle = del.locator('[data-wiki-undelete-title]');
+  await newTitle.waitFor({ timeout: 5000 }).catch(() => {});
+  expect('restore deleted, title taken: asks for another title', (await newTitle.count()) === 1);
+  await newTitle.fill('Setting Up Arch (old)');
+  await del.locator('[data-wiki-undelete-confirm]').click();
+  await main(del).locator('[data-wiki-undeleted]', { hasText: 'Setting Up Arch (old)' }).waitFor({ timeout: 5000 }).catch(() => {});
+  const second = changes(del, 'undelete')[1];
+  expect('restore deleted under a new title: sent with it', second && second.body.commit === sha('5') && second.body.title === 'Setting Up Arch (old)', JSON.stringify(second && second.body));
+  await main(del).locator('[data-wiki-undeleted] a', { hasText: 'Open it' }).click();
+  await main(del).locator('h1', { hasText: 'Setting Up Arch (old)' }).waitFor({ timeout: 5000 }).catch(() => {});
+  expect('restore deleted: the page opens at once', /Restored by the check/.test(await main(del).innerText()));
+  await shot(del, 'wiki-deleted-desktop');
+
+  // Readers can't open recently deleted.
+  const outsider = await open('/wiki/deleted', 'desktop');
+  expect('reader: recently deleted is for editors', /for wiki editors/.test(await main(outsider).innerText()) && !wikiApiCalls(outsider).includes('GET deleted'));
+
+  // A phone: the diff in one column, no sideways scroll.
+  const phone = await open('/wiki/how-to-benchmark/history', 'phone', { wiki: 'editor' });
+  const prow = main(phone).locator(`[data-wiki-history-entry="${sha('2')}"]`);
+  await prow.waitFor({ timeout: 5000 }).catch(() => {});
+  await prow.locator('[data-wiki-show-diff]').click();
+  await prow.locator('[data-wiki-diff] .cm-editor').waitFor({ timeout: 10000 }).catch(() => {});
+  const over = await phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect('phone: the diff is stacked in one column, no sideways scroll', (await prow.locator('[data-wiki-diff]').getAttribute('data-wiki-diff').catch(() => null)) === 'stacked' && (await prow.locator('.cm-deletedChunk, .cm-insertedLine, .cm-changedLine').count()) > 0 && over <= 0, `overflow ${over}px`);
+  await shot(phone, 'wiki-history-diff-phone');
+}
