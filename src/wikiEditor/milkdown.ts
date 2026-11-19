@@ -42,6 +42,17 @@ export interface VisualCallbacks {
   onWikiLinkTrigger(at: { left: number; top: number; bottom: number }): void;
   /** Image files pasted or dropped. */
   onImageFiles(files: File[]): void;
+  /** The cursor moved or the text changed: the style of the block at the cursor. */
+  onBlockStyle(style: BlockStyle): void;
+}
+
+/** A block's style, as the toolbar's style picker shows it: 0 is text, 1 to 6 a heading's level. */
+export type BlockStyle = number;
+
+/** The style of the block the selection starts in: its heading level, or 0. */
+function blockStyle(view: EditorView): BlockStyle {
+  const parent = view.state.selection.$from.parent;
+  return parent.type.name === 'heading' ? Number(parent.attrs.level) || 0 : 0;
 }
 
 const inlineAtom = (name: string, value: string, cls: string, text: string, extra: Record<string, string> = {}) =>
@@ -154,11 +165,15 @@ function hooks(callbacks: VisualCallbacks) {
     () =>
       new Plugin({
         key: pickerKey,
-        view: () => ({
-          update(view, prev) {
-            if (!view.state.doc.eq(prev.doc)) callbacks.onChange();
-          },
-        }),
+        view: (view) => {
+          callbacks.onBlockStyle(blockStyle(view));
+          return {
+            update(view, prev) {
+              if (!view.state.doc.eq(prev.doc)) callbacks.onChange();
+              callbacks.onBlockStyle(blockStyle(view));
+            },
+          };
+        },
         props: {
           // A code block's language field, and a ```mermaid block's live diagram (codeBlockView.ts).
           nodeViews: {
@@ -310,6 +325,7 @@ export async function createVisualEditor(root: HTMLElement, markdown: string, lo
     run(a) {
       const call = (key: Parameters<typeof callCommand>[0], payload?: unknown) => action(callCommand(key as never, payload as never));
       switch (a.kind) {
+        // Every block the selection touches (Milkdown also binds Mod-Alt-0 to 6 to these).
         case 'heading':
           call(wrapInHeadingCommand.key, a.level);
           break;

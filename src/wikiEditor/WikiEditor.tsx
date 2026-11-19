@@ -51,7 +51,7 @@ import Code from '@mui/icons-material/Code';
 import TableChart from '@mui/icons-material/TableChartOutlined';
 import ImageIcon from '@mui/icons-material/ImageOutlined';
 import YouTube from '@mui/icons-material/YouTube';
-import Title from '@mui/icons-material/Title';
+import ArrowDropDown from '@mui/icons-material/ArrowDropDown';
 import { markdownSx } from '../components/MarkdownRenderer';
 import { wikiSx } from '../components/WikiMarkdown';
 import { layout } from '../layout';
@@ -62,7 +62,7 @@ import { MAX_SUMMARY } from '../wikiSource';
 import { loadSource, savePage, SaveError, type PageSource, type SaveResult } from './api';
 import { ImageError, prepareImage, type PreparedImage } from './images';
 import type { MarkdownAction } from './MarkdownEditor';
-import { createVisualEditor, type VisualEditor, type WikiLookup } from './milkdown';
+import { createVisualEditor, type BlockStyle, type VisualEditor, type WikiLookup } from './milkdown';
 
 // CodeMirror comes in its own chunk, the first time Markdown mode opens.
 const MarkdownEditor = lazy(() => import('./MarkdownEditor').then((m) => ({ default: m.MarkdownEditor })));
@@ -257,7 +257,8 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
    * cursor back when it is focused.
    */
   const afterAsk = useRef<(() => void) | null>(null);
-  const [headingMenu, setHeadingMenu] = useState<HTMLElement | null>(null);
+  /** The style of the block at the cursor, for the style picker. */
+  const [blockStyle, setBlockStyle] = useState<BlockStyle>(0);
   const [calloutMenu, setCalloutMenu] = useState<HTMLElement | null>(null);
 
   const visual = useRef<VisualEditor | null>(null);
@@ -305,6 +306,7 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
       },
       onWikiLinkTrigger: (at) => setPicker(at),
       onImageFiles: (files) => void addImages(files),
+      onBlockStyle: setBlockStyle,
     }).then(
       (editor) => {
         if (!live) {
@@ -499,19 +501,8 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
         role="toolbar"
         aria-label="Formatting"
       >
-        <Tooltip title="Headings">
-          <IconButton size="small" aria-label="Headings" onMouseDown={(e) => e.preventDefault()} onClick={(e) => setHeadingMenu(e.currentTarget)}>
-            <Title fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Menu anchorEl={headingMenu} open={!!headingMenu} onClose={() => setHeadingMenu(null)}>
-          {[1, 2, 3].map((level) => (
-            <MenuItem key={level} onClick={() => (setHeadingMenu(null), act({ kind: 'heading', level }))}>
-              Heading {level}
-            </MenuItem>
-          ))}
-          <MenuItem onClick={() => (setHeadingMenu(null), act({ kind: 'paragraph' }))}>Plain text</MenuItem>
-        </Menu>
+        <StylePicker style={blockStyle} onPick={(level) => act(level === 0 ? { kind: 'paragraph' } : { kind: 'heading', level })} />
+        <Divider orientation="vertical" flexItem />
         {tool('Bold', <FormatBold fontSize="small" />, () => act({ kind: 'bold' }), `${mod}B`)}
         {tool('Italic', <FormatItalic fontSize="small" />, () => act({ kind: 'italic' }), `${mod}I`)}
         {tool('Strikethrough', <StrikethroughS fontSize="small" />, () => act({ kind: 'strike' }))}
@@ -584,6 +575,7 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
             apiRef={code}
             titles={titles}
             onImageFiles={(files) => void addImagesRef.current(files)}
+            onBlockStyle={setBlockStyle}
             onChange={(t) => {
               setText(t);
               setTouched(true);
@@ -672,6 +664,85 @@ function EditorBody({ index, source, onClose, onSaved }: { index: WikiIndex; sou
         }}
       />
     </Stack>
+  );
+}
+
+const STYLES = [
+  { level: 0, label: 'Text', short: 'Text', size: '1rem', weight: 400 },
+  { level: 1, label: 'Heading 1', short: 'H1', size: '1.75rem', weight: 700 },
+  { level: 2, label: 'Heading 2', short: 'H2', size: '1.5rem', weight: 700 },
+  { level: 3, label: 'Heading 3', short: 'H3', size: '1.25rem', weight: 700 },
+  { level: 4, label: 'Heading 4', short: 'H4', size: '1.05rem', weight: 700 },
+];
+
+const styleLabel = (level: BlockStyle) => STYLES.find((s) => s.level === level) ?? { label: `Heading ${level}`, short: `H${level}` };
+
+/**
+ * The toolbar's block style picker, as in a word processor: the style of the block at the cursor
+ * (Text or Heading 1 to 4; 5 and 6 are shown but not offered), and a menu that sets it, each style
+ * shown at about its size on the page, with its markdown and shortcut. On phones the label is short.
+ */
+function StylePicker({ style, onPick }: { style: BlockStyle; onPick: (level: number) => void }) {
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const shortcut = (level: number) => (mac ? `⌥⌘${level}` : `Ctrl+Alt+${level}`);
+  const current = styleLabel(style);
+  return (
+    <>
+      <Tooltip title="Text style">
+        <Button
+          size="small"
+          color="inherit"
+          aria-label={`Text style: ${current.label}`}
+          aria-haspopup="menu"
+          aria-expanded={anchor ? 'true' : undefined}
+          data-wiki-style-picker={style}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => setAnchor(e.currentTarget)}
+          endIcon={<ArrowDropDown />}
+          sx={{
+            textTransform: 'none',
+            justifyContent: 'space-between',
+            // Wide enough for the longest label, so the toolbar does not move as the cursor does.
+            width: { xs: 72, sm: 124 },
+            px: 1,
+            fontWeight: 400,
+            '& .MuiButton-endIcon': { ml: 0.25 },
+          }}
+        >
+          <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>
+            {current.label}
+          </Box>
+          <Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}>
+            {current.short}
+          </Box>
+        </Button>
+      </Tooltip>
+      <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)} slotProps={{ list: { dense: true, 'aria-label': 'Text style' } }}>
+        {STYLES.map((s) => (
+          <MenuItem
+            key={s.level}
+            selected={s.level === style}
+            data-wiki-style={s.level}
+            onClick={() => {
+              setAnchor(null);
+              onPick(s.level);
+            }}
+            sx={{ gap: 3, minWidth: 260 }}
+          >
+            <Box component="span" sx={{ flex: 1, fontSize: s.size, fontWeight: s.weight, lineHeight: 1.3 }}>
+              {s.label}
+            </Box>
+            <Box component="span" sx={{ fontFamily: 'monospace', fontSize: '0.8rem', color: 'text.disabled', minWidth: '2.5em' }}>
+              {s.level ? '#'.repeat(s.level) : ''}
+            </Box>
+            <Box component="span" sx={{ fontSize: '0.75rem', color: 'text.secondary', minWidth: '5.5em', textAlign: 'right' }}>
+              {shortcut(s.level)}
+            </Box>
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
   );
 }
 
