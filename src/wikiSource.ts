@@ -9,8 +9,10 @@ import { wikiSlug } from './wikiCore.ts';
 
 export const WIKI_ROOT = 'wiki';
 export const WIKI_ATTACHMENTS = '_attachments';
-/** Slugs the site uses itself (/wiki/all lists every page). */
-export const WIKI_RESERVED_SLUGS: readonly string[] = ['all'];
+/** Slugs the site uses itself (/wiki/all lists every page; /wiki/deleted, recently deleted pages). */
+export const WIKI_RESERVED_SLUGS: readonly string[] = ['all', 'deleted'];
+/** The front page: it can't be renamed or deleted. */
+export const WIKI_HOME_PATH = `${WIKI_ROOT}/Home.md`;
 /** The largest page the editor saves, frontmatter included (UTF-8 bytes). */
 export const MAX_PAGE_BYTES = 200 * 1024;
 /** Longest summary ("What did you change?") a save takes. */
@@ -105,6 +107,132 @@ export function withDraft(frontmatter: string, draft: boolean): string {
   }
   // Not a draft and no draft line: add one at the top.
   return `${frontmatter.slice(0, y.start)}draft: true\n${frontmatter.slice(y.start)}`;
+}
+
+// The `aliases:` key (former titles), in the forms Obsidian and people write it: a flow list on
+// one line, a block list below the key, one scalar, or nothing.
+const ALIASES_LINE = /^aliases[ \t]*:[ \t]*(.*?)[ \t]*$/m;
+const BLOCK_ITEM = /^([ \t]*)-(?:[ \t]+(.*?))?[ \t]*$/;
+const YAML_KEYWORD = /^(?:true|false|null|yes|no|on|off|y|n|~)$/i;
+
+/** A title as a YAML scalar: plain when that reads back as the same string, else double-quoted. */
+export function yamlScalar(value: string): string {
+  if (/^\p{L}[\p{L}\p{N} _().'&!+-]*$/u.test(value) && !/[ ]$/.test(value) && !YAML_KEYWORD.test(value)) return value;
+  return JSON.stringify(value);
+}
+
+/** A YAML scalar as written, read back (plain, '...' or "..."); null when it isn't one this can read. */
+function readScalar(raw: string): string | null {
+  const t = raw.replace(/[ \t]+#.*$/, '').trim();
+  if (t.startsWith('"')) {
+    try {
+      const v = JSON.parse(t) as unknown;
+      return typeof v === 'string' ? v : null;
+    } catch {
+      return null;
+    }
+  }
+  if (t.startsWith("'")) return t.length >= 2 && t.endsWith("'") ? t.slice(1, -1).replace(/''/g, "'") : null;
+  if (/^[|>[\]{}&*!%@`]/.test(t)) return null;
+  return t;
+}
+
+/** The items of a one-line flow list's inside (`A, "B, C"`), or null when it can't be read safely. */
+function flowItems(inner: string): string[] | null {
+  const out: string[] = [];
+  let i = 0;
+  while (i < inner.length) {
+    while (inner[i] === ' ' || inner[i] === '\t') i++;
+    if (i >= inner.length) break;
+    let end: number;
+    const q = inner[i];
+    if (q === '"' || q === "'") {
+      let j = i + 1;
+      while (j < inner.length) {
+        if (q === '"' && inner[j] === '\\') j += 2;
+        else if (q === "'" && inner[j] === "'" && inner[j + 1] === "'") j += 2;
+        else if (inner[j] === q) break;
+        else j++;
+      }
+      if (j >= inner.length) return null;
+      const rest = inner.slice(j + 1);
+      const comma = rest.search(/\S/);
+      if (comma !== -1 && rest[comma] !== ',') return null;
+      end = comma === -1 ? inner.length : j + 1 + comma;
+    } else {
+      end = inner.indexOf(',', i);
+      if (end === -1) end = inner.length;
+      if (/[[\]{}]/.test(inner.slice(i, end))) return null;
+    }
+    const v = readScalar(inner.slice(i, end));
+    if (v === null) return null;
+    out.push(v);
+    i = end + 1;
+  }
+  return out;
+}
+
+const sameTitle = (a: string, b: string) => a.normalize('NFC').toLowerCase() === b.normalize('NFC').toLowerCase();
+
+/**
+ * The frontmatter with `alias` added to its `aliases:` (a former title, so old addresses and
+ * `[[links]]` keep working after a rename): unchanged when it is there already (ignoring case),
+ * the key added when there is none, and frontmatter made when the page has none. Only that key
+ * changes. Throws FrontmatterEditError when `aliases:` is written in a way this can't change safely.
+ */
+export function withAlias(frontmatter: string, alias: string): string {
+  const item = yamlScalar(alias.normalize('NFC'));
+  const y = yamlOf(frontmatter);
+  if (!y) {
+    if (frontmatter !== '') throw new FrontmatterEditError("This page's frontmatter can't be read. Change it in Obsidian.");
+    return `---\naliases:\n  - ${item}\n---\n\n`;
+  }
+  const cant = () => new FrontmatterEditError("This page's aliases are written in a way the site can't change. Rename it in Obsidian.");
+  const m = ALIASES_LINE.exec(y.yaml);
+  const at = (i: number) => y.start + i;
+  const splice = (from: number, to: number, text: string) => frontmatter.slice(0, at(from)) + text + frontmatter.slice(at(to));
+  if (!m) {
+    const yaml = y.yaml === '' || y.yaml.endsWith('\n') ? y.yaml : `${y.yaml}\n`;
+    return frontmatter.slice(0, y.start) + yaml + `aliases:\n  - ${item}\n` + frontmatter.slice(y.start + y.yaml.length);
+  }
+  const value = m[1].replace(/[ \t]+#.*$/, '');
+  const lineEnd = m.index + m[0].length;
+  if (value.startsWith('[')) {
+    if (!value.endsWith(']')) throw cant();
+    const inner = value.slice(1, -1);
+    const items = flowItems(inner);
+    if (items === null) throw cant();
+    if (items.some((a) => sameTitle(a, alias))) return frontmatter;
+    const close = m.index + m[0].indexOf(value) + value.length - 1;
+    return splice(close, close, `${inner.trim() === '' ? '' : ', '}${item}`);
+  }
+  if (value === '') {
+    // A block list below the key (indented or not), or nothing.
+    const lines = y.yaml.slice(lineEnd + 1).split('\n');
+    let end = lineEnd + 1;
+    let indent: string | null = null;
+    const items: string[] = [];
+    for (const line of lines) {
+      const b = BLOCK_ITEM.exec(line);
+      if (!b || (indent !== null && b[1] !== indent)) break;
+      indent = b[1];
+      const v = readScalar(b[2] ?? '');
+      if (v === null) throw cant();
+      items.push(v);
+      end += line.length + 1;
+    }
+    if (indent === null) {
+      if (lines.length > 0 && /^[ \t]+\S/.test(lines[0])) throw cant();
+      return splice(m.index, lineEnd, `aliases:\n  - ${item}`);
+    }
+    if (items.some((a) => sameTitle(a, alias))) return frontmatter;
+    return splice(end, end, `${indent}- ${item}\n`);
+  }
+  // One scalar: a block list of it and the new one.
+  const one = readScalar(value);
+  if (one === null) throw cant();
+  if (sameTitle(one, alias)) return frontmatter;
+  return splice(m.index, lineEnd, `aliases:\n  - ${value.trim()}\n  - ${item}`);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -280,6 +408,45 @@ export function titleClash(title: string, existing: Iterable<string>): string | 
     if (other.normalize('NFC').toLowerCase() === key || wikiSlug(other) === slug) return other;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Images a page uses
+
+const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+/**
+ * The files a page's markdown points at, as written: `![[name]]` and `[[name.ext]]`, and markdown
+ * images and links to a file (`![alt](path)`), outside fenced code. Pages (`.md`, or no
+ * extension) and URLs are left out.
+ */
+export function fileRefs(markdown: string): string[] {
+  const out = new Set<string>();
+  let fence: string | null = null;
+  for (const line of markdown.split('\n')) {
+    const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence !== null) {
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = null;
+      continue;
+    }
+    if (f) {
+      fence = f[1];
+      continue;
+    }
+    const text = line.replace(/`[^`]*`/g, '');
+    for (const m of text.matchAll(/!?\[\[([^\]\n]+?)\]\]/g)) out.add(m[1].split('|')[0].split('#')[0].trim());
+    for (const m of text.matchAll(/!?\[[^\]\n]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g)) {
+      let u = m[1];
+      if (SCHEME.test(u) || u.startsWith('/') || u.startsWith('#')) continue;
+      try {
+        u = decodeURIComponent(u);
+      } catch {
+        /* keep it */
+      }
+      out.add(u.split('#')[0]);
+    }
+  }
+  return [...out].filter((t) => /\.[A-Za-z0-9]{2,5}$/.test(t) && !/\.md$/i.test(t));
 }
 
 /** UTF-8 size of a string. */

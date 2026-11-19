@@ -3,8 +3,9 @@
 // from dist/ directly.
 //
 // - GET /api/latest-video: see latestVideo.ts.
-// - /api/wiki/...: sign-in with Discord, the editor check, drafts, and editing pages (source and
-//   save); see wikiApi.ts and wikiSave.ts.
+// - /api/wiki/...: sign-in with Discord, the editor check, drafts, editing pages (source and
+//   save), history, and renaming, deleting and restoring pages; see wikiApi.ts, wikiSave.ts,
+//   wikiHistory.ts and wikiPages.ts.
 // - A blueprint, benchmark or blog page: index.html with that page's title, description,
 //   canonical, Open Graph and Twitter tags, so link previews and crawlers see the page. Blueprints
 //   and blog posts come from the live vault (cached for 60 s), benchmarks from the build.
@@ -32,7 +33,10 @@ import {
   type PreviewRoute,
 } from './previews.ts';
 
-/** Recent role checks (wikiApi.ts), a few minutes each; a named cache, never served to visitors. */
+/**
+ * Recent role checks, page histories, old versions and commit file lists (wikiApi.ts); a named
+ * cache, never served to visitors.
+ */
 const WIKI_ACCESS_CACHE = 'wiki-access';
 /** The GitHub App's installation token, reused by this isolate until shortly before it expires. */
 const githubTokens: TokenCache = new Map();
@@ -59,6 +63,7 @@ export default {
         tokens: githubTokens,
         takeSlot: (userId) => takeSaveSlot(env.WIKI_RATE_LIMIT, userId),
         waitUntil: (p) => ctx.waitUntil(p),
+        wikiIndex: loadWiki,
       })(request);
     }
 

@@ -160,6 +160,8 @@ export interface EditAnnouncement {
   summary: string;
   editor: string;
   created: boolean;
+  /** The embed's title instead of the page's (a rename, deletion or restore says what happened). */
+  heading?: string;
 }
 
 /**
@@ -175,7 +177,7 @@ export async function announceEdit(f: Fetch, opts: { botToken: string; channelId
     allowed_mentions: { parse: [] },
     embeds: [
       {
-        title: `${e.created ? 'New page: ' : ''}${e.title}`.slice(0, 256),
+        title: (e.heading ?? `${e.created ? 'New page: ' : ''}${e.title}`).slice(0, 256),
         url: e.url,
         description: e.summary.slice(0, 1000),
         author: { name: e.editor.slice(0, 256) },
