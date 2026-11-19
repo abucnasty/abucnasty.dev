@@ -9,7 +9,7 @@
 //   GET  /api/wiki/drafts/<slug>.md            a draft's markdown (editors only)
 //   GET  /api/wiki/source?slug=<slug>          a page's file on the vault's main branch, to edit (editors only)
 //   POST /api/wiki/save                        save a page and its new images (editors only, same-origin;
-//                                              the role is looked up live, never cached; see wikiSave.ts)
+//                                              the role is checked on the request; see wikiSave.ts)
 //   GET  /api/wiki/image/<oid>                 an image just saved, from the LFS bucket, until the vault
 //                                              publishes it (editors only)
 //   GET  /api/wiki/history?path=<path>         a page's edits, newest first, across renames: anyone
@@ -17,7 +17,7 @@
 //   GET  /api/wiki/version?path=&ref=<sha>     a page's file as it was at a commit (editors only)
 //   GET  /api/wiki/deleted                     pages deleted in the last 90 days (editors only)
 //   POST /api/wiki/restore|rename|delete|undelete  change a page (editors only, same-origin, role
-//                                              looked up live, like a save; see wikiPages.ts)
+//                                              checked on the request, like a save; see wikiPages.ts)
 //
 // History, versions and the deleted list are read from GitHub (wikiHistory.ts) with the app's
 // token and kept in the Cache API, so readers cannot spend the app's API budget:
@@ -32,23 +32,16 @@
 //
 // Sessions are signed cookies (session.ts), 30 days per device, with no server-side store. The
 // Discord access token is used once in the callback (to read who signed in) and then dropped.
-// An editor is a member of DISCORD_GUILD_ID holding WIKI_EDITOR_ROLE_ID, looked up with the bot
-// token (discord.ts) on each request that needs it; reads (`me`, drafts) may use an answer up to
-// ACCESS_CACHE_SECONDS old; a save always asks Discord (access() with cached=false). When Discord
-// cannot answer, the answer is a 503 "couldn't check", never a yes and never a silent no.
+// An editor is a member of the server holding its Wiki Editor role. buc-bot keeps that list
+// (bucBot.ts) and every request that needs it asks the bot over the BUC_BOT service binding, saves
+// included; the answer is strongly consistent, so nothing is cached here. When the bot cannot
+// answer, or its list is more than 2 hours old, the answer is a 503 "couldn't check", never a yes
+// and never a silent no.
 //
 // Everything outside Workers globals is passed in (fetch, a cache, the bucket, the clock), so the
 // whole flow is unit-tested under Node (wikiApi.test.ts).
-import {
-  avatarUrl,
-  authorizeUrl,
-  currentUser,
-  DISCORD_ISSUER,
-  displayName,
-  exchangeCode,
-  guildMember,
-  type Fetch,
-} from './discord.ts';
+import { wikiRole, type BucBotApi } from './bucBot.ts';
+import { avatarUrl, authorizeUrl, currentUser, DISCORD_ISSUER, displayName, exchangeCode, type Fetch } from './discord.ts';
 import {
   ACK_COOKIE,
   ACK_SECONDS,
@@ -80,7 +73,6 @@ export const WIKI_API = '/api/wiki/';
 /** R2 keys of the drafts in the catalog bucket (written by the vault's CI; the vault host never serves them). */
 export const DRAFTS_INDEX_KEY = 'wiki-drafts/index.json';
 const draftKey = (slug: string) => `wiki-drafts/${slug}.md`;
-export const ACCESS_CACHE_SECONDS = 300;
 /** How long a page's history and the deleted list are kept. */
 export const HISTORY_SECONDS = 60;
 /** Commit file lists fetched (not cached) per recently-deleted view at most. */
@@ -95,10 +87,10 @@ export interface WikiEnv extends SaveEnv {
   SITE_URL: string;
   DISCORD_CLIENT_ID: string;
   DISCORD_GUILD_ID: string;
-  WIKI_EDITOR_ROLE_ID: string;
   DISCORD_CLIENT_SECRET?: string;
-  DISCORD_BOT_TOKEN?: string;
   WIKI_SESSION_SECRET?: string;
+  /** buc-bot's SiteApi (service binding): who holds the Wiki Editor role; edit announcements. */
+  BUC_BOT?: BucBotApi;
   VAULT_CATALOG: { get(key: string): Promise<{ text(): Promise<string> } | null> };
 }
 
@@ -137,7 +129,6 @@ export interface Me {
 /** A user's access, as the role check found it. */
 export interface Access {
   editor: boolean;
-  member: boolean;
   displayName: string;
   avatarUrl: string;
 }
@@ -218,50 +209,22 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
   }
 
   /**
-   * Whether the session's user is an editor, from Discord (or, with `cached`, an answer at most
-   * ACCESS_CACHE_SECONDS old). Null when Discord could not say.
+   * Whether the session's user is an editor, from buc-bot. Null when the bot could not say. An
+   * editor's name and avatar are the server's (as the bot has them); anyone else's are from their
+   * session.
    */
-  async function access(session: Session, cached: boolean): Promise<Access | null> {
-    const key = `${new URL(env.SITE_URL).origin}/api/wiki/__access/${session.sub}`;
-    if (cached && deps.cache) {
-      const hit = await deps.cache.match(key).catch(() => undefined);
-      if (hit) {
-        const a = (await hit.json().catch(() => null)) as Access | null;
-        if (a && typeof a.editor === 'boolean') return a;
-      }
-    }
-    if (!env.DISCORD_BOT_TOKEN) {
-      log('wiki access: DISCORD_BOT_TOKEN is not set');
+  async function access(session: Session): Promise<Access | null> {
+    const r = await wikiRole(env.BUC_BOT, session.sub, deps.now());
+    if (!r.ok) {
+      log(`wiki access: ${r.reason}`);
       return null;
     }
-    const m = await guildMember(deps.fetch, { botToken: env.DISCORD_BOT_TOKEN, guildId: env.DISCORD_GUILD_ID, userId: session.sub });
-    if (m.kind === 'error') {
-      log(`wiki access: ${m.reason}`);
-      return null;
-    }
-    const profile = { username: session.name, global_name: session.gname };
-    let result: Access;
-    if (m.kind === 'not-member') {
-      result = {
-        editor: false,
-        member: false,
-        displayName: displayName(null, profile),
-        avatarUrl: avatarUrl({ userId: session.sub, guildId: env.DISCORD_GUILD_ID, memberAvatar: null, avatar: session.avatar }),
-      };
-    } else {
-      const user = m.user ?? { ...profile, avatar: session.avatar };
-      result = {
-        editor: m.roles.includes(env.WIKI_EDITOR_ROLE_ID),
-        member: true,
-        displayName: displayName(m.nick, user),
-        avatarUrl: avatarUrl({ userId: session.sub, guildId: env.DISCORD_GUILD_ID, memberAvatar: m.memberAvatar, avatar: user.avatar }),
-      };
-    }
-    if (deps.cache) {
-      const res = new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ACCESS_CACHE_SECONDS}` } });
-      await deps.cache.put(key, res).catch(() => {});
-    }
-    return result;
+    if (r.member) return { editor: true, displayName: r.member.displayName, avatarUrl: r.member.avatarUrl };
+    return {
+      editor: false,
+      displayName: displayName(null, { username: session.name, global_name: session.gname }),
+      avatarUrl: avatarUrl({ userId: session.sub, guildId: env.DISCORD_GUILD_ID, memberAvatar: null, avatar: session.avatar }),
+    };
   }
 
   async function login(url: URL): Promise<Response> {
@@ -331,7 +294,7 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
       if (stale) res.headers.append('Set-Cookie', setCookie(SESSION_COOKIE, '', 0));
       return res;
     }
-    const a = await access(session, true);
+    const a = await access(session);
     if (!a) {
       return failure(503, 'access_check_failed', CHECK_FAILED, {
         signedIn: true,
@@ -358,11 +321,11 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
     return new Response(null, { status: 204, headers });
   }
 
-  /** The editor's session and access, or the response refusing the request. A save passes cached=false. */
-  async function requireEditor(request: Request, cached = true, what = 'to see drafts'): Promise<{ session: Session; access: Access } | Response> {
+  /** The editor's session and access (checked now), or the response refusing the request. */
+  async function requireEditor(request: Request, what = 'to see drafts'): Promise<{ session: Session; access: Access } | Response> {
     const { session } = await sessionOf(request);
     if (!session) return failure(401, 'signed_out', `Sign in as a wiki editor ${what}.`, {}, PRIVATE);
-    const a = await access(session, cached);
+    const a = await access(session);
     if (!a) return failure(503, 'access_check_failed', CHECK_FAILED, {}, PRIVATE);
     if (!a.editor) return failure(403, 'not_editor', "You're signed in, but you don't have wiki access.", {}, PRIVATE);
     return { session, access: a };
@@ -452,7 +415,7 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
     const published = !!pub?.pages.some((p) => newPagePath(p.folder, p.title) === path);
     // Anything but a published page (a draft, a deleted page) is for editors only.
     if (!published) {
-      const who = await requireEditor(request, true, "to see this page's history");
+      const who = await requireEditor(request, "to see this page's history");
       if (who instanceof Response) return who;
     }
     if (editingState(env) === 'unavailable') return notSetUp();
@@ -466,7 +429,7 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
   }
 
   async function version(request: Request, url: URL): Promise<Response> {
-    const who = await requireEditor(request, true, 'to see older versions');
+    const who = await requireEditor(request, 'to see older versions');
     if (who instanceof Response) return who;
     const path = url.searchParams.get('path') ?? '';
     const ref = url.searchParams.get('ref') ?? '';
@@ -486,7 +449,7 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
   }
 
   async function deleted(request: Request): Promise<Response> {
-    const who = await requireEditor(request, true, 'to see deleted pages');
+    const who = await requireEditor(request, 'to see deleted pages');
     if (who instanceof Response) return who;
     if (editingState(env) === 'unavailable') return notSetUp();
     try {
@@ -512,13 +475,13 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
   async function change(request: Request, action: PageAction): Promise<Response> {
     if (!sameOrigin(request)) return failure(403, 'cross_origin', 'Change pages from the site itself.');
     if (editingState(env) === 'read-only') return editingRefusal(env)!;
-    const who = await requireEditor(request, false, 'to change pages');
+    const who = await requireEditor(request, 'to change pages');
     if (who instanceof Response) return who;
     return changePage(env, pageDeps, request, { id: who.session.sub, displayName: who.access.displayName }, action);
   }
 
   async function source(request: Request, url: URL): Promise<Response> {
-    const who = await requireEditor(request, true, 'to edit pages');
+    const who = await requireEditor(request, 'to edit pages');
     if (who instanceof Response) return who;
     const slug = url.searchParams.get('slug') ?? '';
     if (!isDraftSlug(slug)) return failure(404, 'not_found', 'No such page.', {}, PRIVATE);
@@ -527,7 +490,7 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
 
   /** An image saved with a page, shown to its editor before the vault publishes it. */
   async function image(request: Request, oid: string): Promise<Response> {
-    const who = await requireEditor(request, true, 'to see this image');
+    const who = await requireEditor(request, 'to see this image');
     if (who instanceof Response) return who;
     const obj = /^[0-9a-f]{64}$/.test(oid) && env.LFS_BUCKET ? await env.LFS_BUCKET.get(lfsKey(oid)) : null;
     const type = obj?.httpMetadata?.contentType ?? '';
@@ -539,7 +502,7 @@ export function createWikiApi(env: WikiEnv, deps: WikiDeps) {
     if (!sameOrigin(request)) return failure(403, 'cross_origin', 'Save from the site itself.');
     // The emergency stop answers before anything else, signed in or not.
     if (editingState(env) === 'read-only') return save(env, saveDeps, request, { id: '', displayName: '' });
-    const who = await requireEditor(request, false, 'to save');
+    const who = await requireEditor(request, 'to save');
     if (who instanceof Response) return who;
     return save(env, saveDeps, request, { id: who.session.sub, displayName: who.access.displayName });
   }

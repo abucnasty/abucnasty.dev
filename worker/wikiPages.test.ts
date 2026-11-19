@@ -6,6 +6,8 @@ import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import { parse as parseYaml } from 'yaml';
 import { signSession, SESSION_COOKIE } from './session.ts';
+import type { WikiEdit } from './bucBot.ts';
+import { fakeBucBot } from './fakeBucBot.ts';
 import { createWikiApi, type WikiEnv } from './wikiApi.ts';
 import { pageHistory, recentlyDeleted, type HistoryGitHub } from './wikiHistory.ts';
 import { COMMIT_EMAIL } from './wikiSave.ts';
@@ -16,8 +18,6 @@ import { splitPage, withAlias } from '../src/wikiSource.ts';
 const SITE = 'https://abucnasty.dev';
 const SECRET = 's'.repeat(48);
 const GUILD = '1381752136450441266';
-const ROLE = '1572672305019101214';
-const CHANNEL = '1571207361769644142';
 const USER = '80351110224678912';
 const T0 = Date.UTC(2026, 10, 18, 12);
 const REPO = 'https://api.github.com/repos/abucnasty/factorio-vault';
@@ -196,7 +196,8 @@ function vault() {
 // The API with that vault, Discord and the rate limit stood in for.
 
 interface Options {
-  roles?: string[];
+  /** Whether the user holds the Wiki Editor role (default yes). */
+  editor?: boolean;
   readOnly?: boolean;
   published?: WikiIndex['pages'];
   drafts?: WikiIndex['pages'];
@@ -205,14 +206,10 @@ interface Options {
 const meta = (title: string, folder = '', aliases: string[] = []) => ({ title, slug: title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, ''), folder, aliases, headings: [], excerpt: '', links: [], files: [], blob: '' });
 
 async function api(v: ReturnType<typeof vault>, o: Options = {}) {
-  const announced: any[] = [];
+  /** The edits announced through buc-bot, in order. */
+  const announced: WikiEdit[] = [];
   const store = new Map<string, string>();
   const fetch = async (url: string, init: RequestInit = {}) => {
-    if (url === `https://discord.com/api/v10/guilds/${GUILD}/members/${USER}`) return Response.json({ roles: o.roles ?? [ROLE], nick: 'Buc the Editor', avatar: null, user: { id: USER, username: 'buc', global_name: 'Buc', avatar: null } });
-    if (url === `https://discord.com/api/v10/channels/${CHANNEL}/messages`) {
-      announced.push(JSON.parse(String(init.body)).embeds[0]);
-      return Response.json({ id: '1' });
-    }
     if (url === 'https://api.github.com/app/installations/2/access_tokens') return Response.json({ token: 'installation-token', expires_at: new Date(T0 + 3600_000).toISOString() }, { status: 201 });
     assert.ok(url.startsWith(REPO), url);
     return v.github(url, init);
@@ -222,10 +219,8 @@ async function api(v: ReturnType<typeof vault>, o: Options = {}) {
     SITE_URL: SITE,
     DISCORD_CLIENT_ID: '1572695514938613760',
     DISCORD_GUILD_ID: GUILD,
-    WIKI_EDITOR_ROLE_ID: ROLE,
-    WIKI_ANNOUNCE_CHANNEL_ID: CHANNEL,
     DISCORD_CLIENT_SECRET: 'client-secret-value',
-    DISCORD_BOT_TOKEN: 'bot-token-value',
+    BUC_BOT: fakeBucBot({ editor: () => o.editor ?? true, announce: (e) => (announced.push(e), { ok: true }) }, [], () => T0),
     WIKI_SESSION_SECRET: SECRET,
     WIKI_READ_ONLY: o.readOnly ? 'true' : undefined,
     GITHUB_APP_ID: '1',
@@ -312,7 +307,7 @@ test('history API: anyone for a published page (cached), editors only for a draf
 
   // A draft: signed out 401, signed in without the role 403, editor 200.
   assert.equal((await t.get('/api/wiki/history?path=wiki%2FSecret%20Plan.md', false)).status, 401);
-  const member = await api(v, { roles: [], published: [meta('Home')] });
+  const member = await api(v, { editor: false, published: [meta('Home')] });
   assert.equal((await member.get('/api/wiki/history?path=wiki%2FSecret%20Plan.md')).status, 403);
   assert.equal((await member.get(`/api/wiki/version?path=wiki%2FHome.md&ref=${v.head()}`)).status, 403);
   const draft = await t.get('/api/wiki/history?path=wiki%2FSecret%20Plan.md');
@@ -337,7 +332,7 @@ test('restore: the old text as a new commit through the save checks, frontmatter
   assert.equal(v.text('wiki/Guide.md'), '---\naliases: [Old Guide]\n---\n\n# Guide\n\nGood text.\n');
   assert.equal(c.message, SITE_LINE('Restored Guide to the version from 2026-10-01', `Wiki-Restored-Version: ${first}`));
   assert.equal(c.author, 'Buc the Editor');
-  assert.equal(t.announced[0].title, 'Restored Guide to the version from 2026-10-01');
+  assert.equal(t.announced[0].heading, 'Restored Guide to the version from 2026-10-01');
   assert.equal(out.body, '# Guide\n\nGood text.\n');
   // History shows it as a restore; nothing was rewritten.
   const h = await j(await t.get('/api/wiki/history?path=wiki%2FGuide.md'));
@@ -381,7 +376,7 @@ test('rename: one commit moves the page and adds the old title to aliases; clash
   assert.deepEqual(fm, { tags: ['x'], aliases: ['Setup'] });
   assert.equal(splitPage(text).body, '# Setup\n\n![[shot.webp]] and ![[logo.png]]\n');
   assert.equal(out.path, 'wiki/Linux/Setting Up.md');
-  assert.equal(t.announced[0].title, 'Renamed Setup to Setting Up');
+  assert.equal(t.announced[0].heading, 'Renamed Setup to Setting Up');
   assert.equal(t.announced[0].url, 'https://abucnasty.dev/wiki/setting-up');
 });
 
@@ -454,7 +449,7 @@ test('delete: one commit removing the page (images kept), announced when publish
   assert.deepEqual([c.removed, c.written], [['wiki/Guides/Old.md'], []]);
   assert.equal(c.message, SITE_LINE('Merged into Setup', 'Wiki-Deleted: wiki/Guides/Old.md'));
   assert.ok(v.blobAt('wiki/Guides/_attachments/shot.webp'));
-  assert.equal(t.announced[0].title, 'Deleted Old');
+  assert.equal(t.announced[0].heading, 'Deleted Old');
   await t.post('delete', { path: 'wiki/Draft.md', base: v.blobAt('wiki/Draft.md') });
   assert.equal(lastCommit(v).removed[0], 'wiki/Draft.md');
   assert.equal(t.announced.length, 1, 'a draft is never announced');
@@ -492,7 +487,7 @@ test('recently deleted: site and Obsidian deletions in 90 days, not renames or p
   assert.equal(res.status, 200, JSON.stringify(out));
   assert.equal(v.text('wiki/A.md'), '# A\n');
   assert.equal(lastCommit(v).message, SITE_LINE('Restored A', 'Wiki-Restored-From: wiki/A.md'));
-  assert.equal(t.announced[0].title, 'Restored A');
+  assert.equal(t.announced[0].heading, 'Restored A');
   assert.equal(out.body, '# A\n');
   const after = await j(await t.get('/api/wiki/deleted'));
   assert.deepEqual(after.pages.map((p: any) => p.title), ['B'], 'the list was read again after the restore');
@@ -524,7 +519,7 @@ test('every change is refused cross-site, signed out, without the role, and whil
     undelete: { path: 'wiki/Gone.md', commit: v.head() },
   };
   const ok = await api(v);
-  const member = await api(v, { roles: ['1'] });
+  const member = await api(v, { editor: false });
   const readOnly = await api(v, { readOnly: true });
   for (const [what, body] of Object.entries(bodies)) {
     assert.equal((await ok.post(what, body, { Origin: 'https://evil.example', Cookie: 'x' })).status, 403, `${what} cross-site`);

@@ -26,14 +26,12 @@
   "vars": {
     // Base of the canonical and og:url tags the Worker writes. index.html's own tags are separate.
     "SITE_URL": "https://abucnasty.dev",
-    // Wiki sign-in with Discord (worker/wikiApi.ts). Public values: the buc-bot application, the
-    // server whose "Wiki Editor" role makes someone a wiki editor, and (from step 3) the channel
-    // edits are announced in. The OAuth2 redirect registered in Discord is exactly
-    // <SITE_URL>/api/wiki/auth/callback.
+    // Wiki sign-in with Discord (worker/wikiApi.ts). Public values: the buc-bot application and
+    // the server (for default avatars). Who holds its "Wiki Editor" role, and the channel edits are
+    // announced in, are buc-bot's settings (BUC_BOT below). The OAuth2 redirect registered in
+    // Discord is exactly <SITE_URL>/api/wiki/auth/callback.
     "DISCORD_CLIENT_ID": "1572695514938613760",
     "DISCORD_GUILD_ID": "1381752136450441266",
-    "WIKI_EDITOR_ROLE_ID": "1572672305019101214",
-    "WIKI_ANNOUNCE_CHANNEL_ID": "1571207361769644142",
     // Saving wiki pages (worker/wikiSave.ts) commits to abucnasty/factorio-vault as a GitHub App
     // installed only on that repository with Contents: read and write. Its numeric App ID and the
     // installation's ID (both public). The private key is the GITHUB_APP_PRIVATE_KEY secret
@@ -60,16 +58,21 @@
   // from the migration; there is nothing to set up by hand.
   "durable_objects": { "bindings": [{ "name": "WIKI_RATE_LIMIT", "class_name": "WikiRateLimiter" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WikiRateLimiter"] }],
+  // buc-bot (repository abucnasty/discord-bots), over RPC to its SiteApi entrypoint: who holds the
+  // Wiki Editor role, and wiki edit announcements (worker/bucBot.ts). The bot token lives only
+  // there. buc-bot must be deployed first: a deploy that binds to a Worker that does not exist
+  // fails.
+  "services": [{ "binding": "BUC_BOT", "service": "buc-bot", "entrypoint": "SiteApi" }],
   "secrets": {
     // YouTube Data API v3 key for /api/latest-video. The deploy workflow uploads it from the
     // YOUTUBE_API_KEY repository secret; locally it comes from .dev.vars.
-    // DISCORD_CLIENT_SECRET (buc-bot's OAuth2 secret), DISCORD_BOT_TOKEN (buc-bot's token, to look
-    // up server members) and WIKI_SESSION_SECRET (random, at least 32 bytes; signs the wiki session
-    // cookies) are set on the Worker by hand (`wrangler secret put`), not by the deploy workflow,
-    // which keeps them. Changing WIKI_SESSION_SECRET signs everyone out.
+    // DISCORD_CLIENT_SECRET (buc-bot's OAuth2 secret, for sign-in only) and WIKI_SESSION_SECRET
+    // (random, at least 32 bytes; signs the wiki session cookies) are set on the Worker by hand
+    // (`wrangler secret put`), not by the deploy workflow, which keeps them. Changing
+    // WIKI_SESSION_SECRET signs everyone out. The bot token is never set here (BUC_BOT above).
     // GITHUB_APP_PRIVATE_KEY (the wiki GitHub App's private key, PEM, PKCS#8; a PKCS#1 key as
     // GitHub issues it works too) is set by hand the same way.
-    "required": ["YOUTUBE_API_KEY", "DISCORD_CLIENT_SECRET", "DISCORD_BOT_TOKEN", "WIKI_SESSION_SECRET", "GITHUB_APP_PRIVATE_KEY"]
+    "required": ["YOUTUBE_API_KEY", "DISCORD_CLIENT_SECRET", "WIKI_SESSION_SECRET", "GITHUB_APP_PRIVATE_KEY"]
   },
   // The public address. A custom domain: wrangler deploy creates the DNS record and certificate
   // on the abucnasty.dev zone, which must be in the same Cloudflare account. www.abucnasty.dev is

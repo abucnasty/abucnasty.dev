@@ -10,7 +10,7 @@
 //   4. One commit on main (author: the editor's display name; the message names the editor and
 //      ends with a trailer saying what happened, which the history reads: see wikiHistory.ts),
 //      main moved to it without force, retried on a new head up to MAX_ATTEMPTS times.
-//   5. Announced in WIKI_ANNOUNCE_CHANNEL_ID unless the page is a draft.
+//   5. Announced by buc-bot unless the page is a draft.
 // History is never rewritten: a restore is a new commit.
 //
 //   POST /api/wiki/restore   { path, base, commit, from }  the text of the page as it was at `commit`

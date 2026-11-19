@@ -1,8 +1,10 @@
-// The wiki's sign-in, editor check and drafts (wikiApi.ts, session.ts, discord.ts), with Discord,
-// the cache and the R2 bucket stood in for.
+// The wiki's sign-in, editor check and drafts (wikiApi.ts, session.ts, discord.ts, bucBot.ts),
+// with Discord, buc-bot (the BUC_BOT binding) and the R2 bucket stood in for.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { STALE_AFTER_MS } from './bucBot.ts';
 import { avatarUrl } from './discord.ts';
+import { fakeBucBot, type FakeBucBotOptions } from './fakeBucBot.ts';
 import {
   ACK_COOKIE,
   SESSION_COOKIE,
@@ -14,27 +16,22 @@ import {
   verifySession,
   verifyState,
 } from './session.ts';
-import { createWikiApi, isDraftSlug, safeReturnPath, type AccessCache, type WikiEnv } from './wikiApi.ts';
+import { createWikiApi, isDraftSlug, safeReturnPath, type WikiEnv } from './wikiApi.ts';
 
 const SITE = 'https://abucnasty.dev';
 const SECRET = 's'.repeat(48);
 const GUILD = '1381752136450441266';
-const ROLE = '1572672305019101214';
 const USER = '80351110224678912';
 const T0 = Date.UTC(2026, 10, 18, 12);
 
 interface Discord {
-  /** What GET /guilds/{guild}/members/{user} answers. */
-  member: () => Response;
   token?: () => Response;
   me?: () => Response;
 }
 
-const member = (roles: string[], extra: object = {}) =>
-  Response.json({ roles, nick: null, avatar: null, user: { id: USER, username: 'buc', global_name: 'Buc', avatar: null }, ...extra });
-const notMember = () => Response.json({ message: 'Unknown Member', code: 10007 }, { status: 404 });
-
-function setup(discord: Discord, opts: { drafts?: Record<string, string>; secret?: string } = {}) {
+function setup(bot: FakeBucBotOptions = {}, opts: { drafts?: Record<string, string>; secret?: string; discord?: Discord; noBinding?: boolean } = {}) {
+  const discord = opts.discord ?? {};
+  const rpc: Array<{ method: string; url: string; body?: any }> = [];
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const logs: string[] = [];
   let now = T0;
@@ -44,9 +41,8 @@ function setup(discord: Discord, opts: { drafts?: Record<string, string>; secret
     SITE_URL: SITE,
     DISCORD_CLIENT_ID: '1572695514938613760',
     DISCORD_GUILD_ID: GUILD,
-    WIKI_EDITOR_ROLE_ID: ROLE,
     DISCORD_CLIENT_SECRET: 'client-secret-value',
-    DISCORD_BOT_TOKEN: 'bot-token-value',
+    BUC_BOT: opts.noBinding ? undefined : fakeBucBot(bot, rpc, () => now),
     WIKI_SESSION_SECRET: opts.secret ?? SECRET,
     VAULT_CATALOG: {
       async get(key) {
@@ -56,30 +52,19 @@ function setup(discord: Discord, opts: { drafts?: Record<string, string>; secret
       },
     },
   };
-  const store = new Map<string, string>();
-  const cache: AccessCache = {
-    async match(key) {
-      const v = store.get(key);
-      return v === undefined ? undefined : new Response(v);
-    },
-    async put(key, res) {
-      store.set(key, await res.text());
-    },
-  };
   const fetch = async (url: string, init?: RequestInit) => {
     calls.push({ url, init });
     if (url === 'https://discord.com/api/v10/oauth2/token') return (discord.token ?? (() => Response.json({ access_token: 'user-access-token', token_type: 'Bearer' })))();
     if (url === 'https://discord.com/api/v10/users/@me') return (discord.me ?? (() => Response.json({ id: USER, username: 'buc', global_name: 'Buc', avatar: 'abcdef0123456789' })))();
-    if (url === `https://discord.com/api/v10/guilds/${GUILD}/members/${USER}`) return discord.member();
     throw new Error(`unexpected fetch ${url}`);
   };
-  const handle = createWikiApi(env, { fetch, cache, now: () => now, log: (m) => logs.push(m) });
+  const handle = createWikiApi(env, { fetch, cache: null, now: () => now, log: (m) => logs.push(m) });
   const req = (path: string, init: RequestInit & { cookies?: Record<string, string> } = {}) => {
     const headers = new Headers(init.headers);
     if (init.cookies) headers.set('Cookie', Object.entries(init.cookies).map(([k, v]) => `${k}=${v}`).join('; '));
     return handle(new Request(path.startsWith('https://') ? path : SITE + path, { ...init, headers }));
   };
-  return { req, calls, logs, store, reads, tick: (ms: number) => (now += ms), clearCache: () => store.clear() };
+  return { req, calls, rpc, logs, reads, tick: (ms: number) => (now += ms) };
 }
 
 const session = (nowMs = T0) => signSession({ sub: USER, name: 'buc', gname: 'Buc', avatar: null }, SECRET, nowMs);
@@ -116,7 +101,7 @@ test('return paths: only same-site paths outside /api/', () => {
 });
 
 test('login: a state cookie bound to the request, then Discord with identify only and the registered redirect', async () => {
-  const t = setup({ member: () => member([ROLE]) });
+  const t = setup();
   const res = await t.req('/api/wiki/auth/login?return=%2Fwiki%2Fall');
   assert.equal(res.status, 302);
   const to = new URL(res.headers.get('Location')!);
@@ -137,7 +122,7 @@ test('login: a state cookie bound to the request, then Discord with identify onl
 });
 
 test('callback: happy path sets a 30-day session, drops the token, clears the state and returns', async () => {
-  const t = setup({ member: () => member([ROLE]) });
+  const t = setup();
   const login = await t.req('/api/wiki/auth/login?return=/wiki/all');
   const state = new URL(login.headers.get('Location')!).searchParams.get('state')!;
   const stateCookie = cookieOf(login, STATE_COOKIE)!.value;
@@ -165,7 +150,7 @@ test('callback: happy path sets a 30-day session, drops the token, clears the st
 });
 
 test('callback: failures sign nobody in and say why on the return page', async () => {
-  const t = setup({ member: () => member([ROLE]) });
+  const t = setup();
   const st = await signState('the-state', '/wiki/x', SECRET, T0);
   const cb = (q: string, cookies: Record<string, string> = { [STATE_COOKIE]: st }) => t.req(`/api/wiki/auth/callback?${q}`, { cookies });
   const outcome = async (res: Response) => {
@@ -182,27 +167,29 @@ test('callback: failures sign nobody in and say why on the return page', async (
   assert.equal(await outcome(await cb('code=abc&state=the-state')), '/wiki?wiki-signin=expired', 'state older than 10 minutes');
   assert.equal(t.calls.length, 0, 'Discord was never asked');
 
-  const bad = setup({ member: () => member([ROLE]), token: () => Response.json({ error: 'invalid_grant' }, { status: 400 }) });
+  const bad = setup({}, { discord: { token: () => Response.json({ error: 'invalid_grant' }, { status: 400 }) } });
   const res = await bad.req('/api/wiki/auth/callback?code=used&state=the-state', { cookies: { [STATE_COOKIE]: st } });
   assert.equal(await outcome(res), '/wiki/x?wiki-signin=failed', 'Discord refused the code');
   assert.match(bad.logs.join(), /token exchange: HTTP 400/);
-  const down = setup({ member: () => member([ROLE]), me: () => new Response('oops', { status: 502 }) });
+  const down = setup({}, { discord: { me: () => new Response('oops', { status: 502 }) } });
   assert.equal(await outcome(await down.req('/api/wiki/auth/callback?code=abc&state=the-state', { cookies: { [STATE_COOKIE]: st } })), '/wiki/x?wiki-signin=failed');
   // Nothing secret in the logs.
-  assert.doesNotMatch([...bad.logs, ...down.logs].join(), /secret-value|token-value|user-access-token/);
+  assert.doesNotMatch([...bad.logs, ...down.logs].join(), /secret-value|user-access-token/);
 });
 
-test('me: signed out, editor (first sign-in until acknowledged), no role, not in the server, Discord failing', async () => {
-  const out = setup({ member: () => member([ROLE]) });
+test('me: signed out, editor (first sign-in until acknowledged), not an editor, and buc-bot unable to say', async () => {
+  const out = setup();
   let res = await out.req('/api/wiki/me');
   assert.equal(res.headers.get('Cache-Control'), 'no-store');
   assert.deepEqual(await j(res), { signedIn: false, editor: false, userId: null, displayName: null, avatarUrl: null });
+  assert.equal(out.rpc.length, 0, 'signed out: the bot is not asked');
   // A forged or expired cookie is signed out, and cleared.
   res = await out.req('/api/wiki/me', { cookies: { [SESSION_COOKIE]: 'e30.AAAA' } });
   assert.equal((await j(res)).signedIn, false);
   assert.match(cookieOf(res, SESSION_COOKIE)!.line, /Max-Age=0/);
 
-  const ed = setup({ member: () => member([ROLE, '1'], { nick: 'Buc the Editor' }) });
+  const serverAvatar = `https://cdn.discordapp.com/guilds/${GUILD}/users/${USER}/avatars/0123456789abcdef.png?size=64`;
+  const ed = setup({ displayName: 'Buc the Editor', avatarUrl: serverAvatar });
   const cookies = { [SESSION_COOKIE]: await session() };
   res = await ed.req('/api/wiki/me', { cookies });
   assert.deepEqual(await j(res), {
@@ -210,13 +197,12 @@ test('me: signed out, editor (first sign-in until acknowledged), no role, not in
     editor: true,
     userId: USER,
     displayName: 'Buc the Editor',
-    avatarUrl: avatarUrl({ userId: USER, guildId: GUILD, memberAvatar: null, avatar: null }),
+    avatarUrl: serverAvatar,
     firstSignIn: true,
     // No GitHub App in these tests: editing is not set up.
     editing: 'unavailable',
   });
-  const member0 = ed.calls[0];
-  assert.equal((member0.init?.headers as Record<string, string>).Authorization, 'Bot bot-token-value');
+  assert.deepEqual(ed.rpc[0], { method: 'RPC', url: 'buc-bot/wikiMember', body: USER });
   // Acknowledging: same-origin only, then not shown again for this user on this device.
   assert.equal((await ed.req('/api/wiki/ack', { method: 'POST', cookies, headers: { Origin: 'https://evil.example' } })).status, 403);
   const ack = await ed.req('/api/wiki/ack', { method: 'POST', cookies, headers: { Origin: SITE } });
@@ -225,9 +211,10 @@ test('me: signed out, editor (first sign-in until acknowledged), no role, not in
   assert.match(ackCookie.line, /HttpOnly; Secure; SameSite=Lax/);
   res = await ed.req('/api/wiki/me', { cookies: { ...cookies, [ACK_COOKIE]: ackCookie.value } });
   assert.equal((await j(res)).firstSignIn, false);
-  assert.equal(ed.calls.length, 1, 'the second me used the cached role check');
+  assert.equal(ed.rpc.length, 2, 'each request asks the bot (nothing cached)');
 
-  const plain = setup({ member: () => member(['1']) });
+  // Not an editor (no role, or not in the server): their own name and default avatar.
+  const plain = setup({ editor: () => false });
   assert.deepEqual(await j(await plain.req('/api/wiki/me', { cookies })), {
     signedIn: true,
     editor: false,
@@ -235,31 +222,36 @@ test('me: signed out, editor (first sign-in until acknowledged), no role, not in
     displayName: 'Buc',
     avatarUrl: avatarUrl({ userId: USER, guildId: GUILD, memberAvatar: null, avatar: null }),
   });
-  const stranger = setup({ member: notMember });
-  const s = await j(await stranger.req('/api/wiki/me', { cookies }));
-  assert.deepEqual([s.signedIn, s.editor, s.displayName], [true, false, 'Buc']);
 
-  for (const failing of [() => new Response('{}', { status: 500 }), () => Response.json({ message: 'rate limited', retry_after: 2 }, { status: 429 }), () => Response.json({ code: 10004 }, { status: 404 })]) {
-    const t = setup({ member: failing });
+  // The bot can't say: never synced, its list older than 2 hours, the call failing, a nonsense
+  // answer, no binding. Never a yes, never a silent no.
+  const cantSay: Array<[string, ReturnType<typeof setup>, RegExp]> = [
+    ['never synced', setup({ syncedAt: () => null }), /never synced/],
+    ['stale', setup({ syncedAt: () => T0 - STALE_AFTER_MS - 1000 }), /last synced the role 120 minutes ago/],
+    ['binding error', setup({ wikiMember: () => Promise.reject(new Error('Worker "buc-bot" not found')) }), /buc-bot: Worker "buc-bot" not found/],
+    ['bad answer', setup({ wikiMember: async () => ({ syncedAt: T0, member: { editor: true, displayName: 'x', avatarUrl: 'javascript:alert(1)' } }) as any }), /not an answer/],
+    ['no binding', setup({}, { noBinding: true }), /BUC_BOT binding is missing/],
+  ];
+  for (const [why, t, logged] of cantSay) {
     res = await t.req('/api/wiki/me', { cookies });
-    assert.equal(res.status, 503);
+    assert.equal(res.status, 503, why);
     const body = await j(res);
-    assert.deepEqual([body.error, body.signedIn, body.editor], ['access_check_failed', true, undefined]);
+    assert.deepEqual([body.error, body.signedIn, body.editor], ['access_check_failed', true, undefined], why);
     assert.match(body.message, /Couldn't check your wiki access/);
-    assert.equal(t.store.size, 0, 'a failed check is not cached');
+    assert.ok(t.logs.some((l) => logged.test(l)), `${why}: ${t.logs.join(' | ')}`);
   }
-  const thrown = setup({ member: () => { throw new TypeError('network'); } });
-  assert.equal((await thrown.req('/api/wiki/me', { cookies })).status, 503);
+  // Just inside the threshold is still an answer.
+  assert.equal((await j(await setup({ syncedAt: () => T0 - STALE_AFTER_MS + 60_000 }).req('/api/wiki/me', { cookies }))).editor, true);
 });
 
-test('drafts: editors only, re-checked (cached a few minutes), only drafts the index lists, never cached by browsers', async () => {
+test('drafts: editors only, re-checked on each request, only drafts the index lists, never cached by browsers', async () => {
   const drafts = {
     'wiki-drafts/index.json': JSON.stringify({ schema: 1, pages: [{ slug: 'how-to-edit', title: 'How to Edit' }], files: [] }),
     'wiki-drafts/how-to-edit.md': '# Draft\n',
     'wiki-drafts/old-draft.md': 'published since',
   };
-  let roles = [ROLE];
-  const t = setup({ member: () => member(roles) }, { drafts });
+  let editor = true;
+  const t = setup({ editor: () => editor }, { drafts });
   const cookies = { [SESSION_COOKIE]: await session() };
   assert.equal((await t.req('/api/wiki/drafts/index.json')).status, 401);
   let res = await t.req('/api/wiki/drafts/index.json', { cookies });
@@ -273,22 +265,21 @@ test('drafts: editors only, re-checked (cached a few minutes), only drafts the i
   assert.equal((await t.req('/api/wiki/drafts/how-to-edit.md', { cookies, method: 'POST' })).status, 405);
   assert.ok(t.reads.every((k) => k.startsWith('wiki-drafts/')), t.reads.join());
 
-  // The role taken away: refused once the cached answer is gone.
-  roles = ['1'];
-  t.clearCache();
+  // The role taken away: refused on the next request.
+  editor = false;
   res = await t.req('/api/wiki/drafts/how-to-edit.md', { cookies });
   assert.deepEqual([res.status, (await j(res)).error], [403, 'not_editor']);
-  const stranger = setup({ member: notMember }, { drafts });
+  const stranger = setup({ editor: () => false }, { drafts });
   assert.equal((await stranger.req('/api/wiki/drafts/index.json', { cookies })).status, 403);
-  const down = setup({ member: () => new Response('', { status: 503 }) }, { drafts });
+  const down = setup({ syncedAt: () => null }, { drafts });
   assert.equal((await down.req('/api/wiki/drafts/index.json', { cookies })).status, 503);
   // Before the vault publishes any drafts: an empty list.
-  const none = setup({ member: () => member([ROLE]) });
+  const none = setup();
   assert.deepEqual((await j(await none.req('/api/wiki/drafts/index.json', { cookies }))).pages, []);
 });
 
 test('logout: POST from the site only; clears the session', async () => {
-  const t = setup({ member: () => member([ROLE]) });
+  const t = setup();
   assert.equal((await t.req('/api/wiki/auth/logout')).status, 405);
   assert.equal((await t.req('/api/wiki/auth/logout', { method: 'POST', headers: { Origin: 'https://evil.example' } })).status, 403);
   assert.equal((await t.req('/api/wiki/auth/logout', { method: 'POST' })).status, 403, 'no Origin and no Sec-Fetch-Site');
@@ -300,7 +291,7 @@ test('logout: POST from the site only; clears the session', async () => {
 });
 
 test('not configured: no session secret means nobody is signed in and sign-in says unavailable', async () => {
-  const t = setup({ member: () => member([ROLE]) }, { secret: '' });
+  const t = setup({}, { secret: '' });
   const res = await t.req('/api/wiki/auth/login?return=/wiki/all');
   assert.equal(res.headers.get('Location'), '/wiki/all?wiki-signin=unavailable');
   assert.equal((await j(await t.req('/api/wiki/me', { cookies: { [SESSION_COOKIE]: await session() } }))).signedIn, false);
