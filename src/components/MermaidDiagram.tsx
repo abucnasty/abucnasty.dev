@@ -11,6 +11,14 @@ type State = 'loading' | 'drawn' | 'failed';
 // (so its text stays readable); past that it scrolls sideways inside its box.
 const MIN_SCALE = 0.7;
 
+/** Size a drawn diagram for its box: as wide as the box allows, shrinking to no less than MIN_SCALE. */
+export function fitDiagram(svg: SVGSVGElement) {
+  // mermaid sets max-width to the diagram's natural width and width to 100%.
+  const natural = parseFloat(svg.style.maxWidth) || svg.viewBox.baseVal?.width || 0;
+  if (natural > 0) svg.style.minWidth = `${Math.round(natural * MIN_SCALE)}px`;
+  svg.style.height = 'auto';
+}
+
 export function MermaidDiagram({ source }: { source: string }) {
   const [state, setState] = useState<State>('loading');
   const box = useRef<HTMLDivElement>(null);
@@ -23,10 +31,7 @@ export function MermaidDiagram({ source }: { source: string }) {
       .then(
         (svg) => {
           if (!live || !box.current) return;
-          // mermaid sets max-width to the diagram's natural width and width to 100%.
-          const natural = parseFloat(svg.style.maxWidth) || svg.viewBox.baseVal?.width || 0;
-          if (natural > 0) svg.style.minWidth = `${Math.round(natural * MIN_SCALE)}px`;
-          svg.style.height = 'auto';
+          fitDiagram(svg);
           box.current.replaceChildren(svg);
           setState('drawn');
         },

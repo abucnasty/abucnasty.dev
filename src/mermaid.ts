@@ -6,6 +6,10 @@
 //   through @braintree/sanitize-url (javascript: becomes about:blank), label text is run
 //   through DOMPurify before it is drawn, and the finished SVG markup is run through DOMPurify.
 // - htmlLabels off: labels are SVG <text>, not HTML in a <foreignObject>.
+// - The look is flat: mermaid 12 draws flowcharts in its 'neo' look by default, with a gradient
+//   border and drop shadows; 'classic' with useGradient and dropShadow off draws plain dark boxes
+//   with one accent border; any other shadow is turned off in themeCSS, and mermaid's unused
+//   shadow filters are dropped below. The look and theme are locked like the rest.
 // - `secure`: a diagram's own `%%{init: ...}%%` directive cannot change any of the above, nor
 //   the DOMPurify options, the theme, its CSS or fonts (mermaid drops those keys from directives).
 // - suppressErrorRendering: a broken diagram throws instead of drawing mermaid's error picture.
@@ -26,6 +30,9 @@ const config: MermaidConfig = {
   // mermaid 12 lays out with ELK by default (a further ~470 kB gzipped); dagre is what Obsidian
   // and GitHub draw with. A diagram can still ask for ELK in its own config.
   layout: 'dagre',
+  // Flowcharts take their own `flowchart.look`, which defaults to 'neo'.
+  look: 'classic',
+  flowchart: { look: 'classic' },
   // Keys a diagram's own init directive may not change (mermaid's defaults first).
   secure: [
     'secure',
@@ -43,8 +50,12 @@ const config: MermaidConfig = {
     'fontFamily',
     'altFontFamily',
     'logLevel',
+    // Removed at any depth, so `flowchart: { look }` in a directive goes too.
+    'look',
   ],
   theme: 'base',
+  // Some diagrams' own styles add shadows whatever the look (a sequence diagram's actor menus).
+  themeCSS: '* { filter: none !important; }',
   darkMode: true,
   fontFamily: typography.fontFamily,
   themeVariables: {
@@ -52,7 +63,8 @@ const config: MermaidConfig = {
     fontFamily: typography.fontFamily,
     fontSize: '15px',
     background: palette.background.paper,
-    primaryColor: '#2b2110',
+    // Plain dark boxes with the site's orange as their one accent (borders).
+    primaryColor: '#1e1e1e',
     primaryBorderColor: palette.primary.main,
     primaryTextColor: palette.text.primary,
     secondaryColor: '#16261a',
@@ -70,6 +82,8 @@ const config: MermaidConfig = {
     clusterBkg: '#181818',
     clusterBorder: '#5c5c5c',
     titleColor: palette.text.primary,
+    useGradient: false,
+    dropShadow: 'none',
   },
 };
 
@@ -81,6 +95,8 @@ function setup(): Promise<void> {
 }
 
 const UNSAFE_TAGS = 'script, iframe, object, embed, foreignObject, foreignobject';
+// mermaid adds these to every diagram, whatever its look; nothing uses them in the flat look.
+const SHADOW_FILTERS = 'filter[id$="-drop-shadow"], filter[id$="-drop-shadow-small"]';
 const SAFE_URL = /^(?:#|https?:\/\/)/i;
 
 /** The SVG in `markup`, parsed inertly and stripped of anything that could run or navigate oddly. */
@@ -89,6 +105,7 @@ function inertSvg(markup: string): SVGSVGElement {
   const svg = doc.body.querySelector('svg');
   if (!svg || doc.body.children.length !== 1) throw new Error('mermaid did not return one SVG');
   for (const el of svg.querySelectorAll(UNSAFE_TAGS)) el.remove();
+  for (const el of svg.querySelectorAll(SHADOW_FILTERS)) el.remove();
   for (const el of [svg, ...svg.querySelectorAll('*')]) {
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase();

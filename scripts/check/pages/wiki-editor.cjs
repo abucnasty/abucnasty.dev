@@ -3,10 +3,12 @@
 // pastes an image, switches modes, and saves (the request is checked: path, base blob, frontmatter
 // as loaded, body, image); a conflict keeps the text with "Copy my text"; switching modes without
 // changes keeps the text exactly; links edited, added and removed in visual mode; a new page from
-// /wiki/all, and one in a new folder; phones.
+// /wiki/all, and one in a new folder; ```mermaid blocks drawn live in visual mode; phones.
 const { FRONTMATTER } = require('../fixtures/wiki-api.cjs');
+const { MERMAID } = require('../fixtures/wiki.cjs');
 
 const EDITOR_CHUNK = /\/assets\/(WikiEditor|MarkdownEditor)-[^/]*\.js$/;
+const MERMAID_CHUNK = /\/assets\/mermaid-[\w-]+\.js$/;
 
 /** Paste a small PNG (drawn in the page) into the focused editor. */
 async function pasteImage(page, selector) {
@@ -218,6 +220,93 @@ module.exports = {
       linkBody.includes('[Do not click](https://example.com/new)') && !linkBody.includes('javascript:') && /\nLinked then unlinked\n?$/.test(linkBody) && linkBody.includes(`[[${wikiValue}]]`),
       linkBody.slice(-200),
     );
+
+    // Mermaid in visual mode: a page without a diagram never loads mermaid in the editor (checked
+    // on every editor opened above); a page with them shows each drawn under its code, redrawn as
+    // the code changes, the last good diagram kept (with a short note) while the code is broken.
+    // The preview never changes the markdown: the save differs from the source only by the edit.
+    for (const p of [page, same, conflict, lp]) expect('an edit without a mermaid block never loads mermaid', !requests(p).some((u) => MERMAID_CHUNK.test(u)), requests(p).filter((u) => /mermaid/i.test(u)).join(' '));
+    const mp = await open('/wiki/setting-up-arch-to-run-factorio', 'desktop', { wiki: 'editor' });
+    await main(mp).locator('[data-wiki-edit]').click();
+    const mpm = mp.locator('[data-wiki-visual-editor] .ProseMirror');
+    await mpm.waitFor({ timeout: 10000 }).catch(() => {});
+    const blocks = mpm.locator('.wiki-code-block');
+    const preview = (i) => blocks.nth(i).locator('.wiki-mermaid-preview');
+    const settled = (i, state) => mp.waitForFunction(([i, s]) => document.querySelectorAll('.ProseMirror .wiki-code-block .wiki-mermaid-preview')[i]?.getAttribute('data-mermaid-preview') === s, [i, state], { timeout: 15000 }).catch(() => {});
+    await settled(0, 'drawn');
+    expect('visual mode: a mermaid block opens with its diagram drawn under the code', (await blocks.count()) === MERMAID.length && (await preview(0).locator('.wiki-mermaid-diagram svg').count()) === 1 && (await preview(0).getAttribute('contenteditable')) === 'false' && (await blocks.nth(0).locator('pre code').innerText()).startsWith('flowchart TD'));
+    expect('the editor loads mermaid for a page with a diagram', requests(mp).some((u) => MERMAID_CHUNK.test(u)));
+    expect('the preview draws as on the page (its labels)', (await preview(0).locator('svg').textContent()).includes('Save file'));
+    await settled(2, 'error');
+    expect('a broken block: a short error note, no bomb picture', /^Diagram has an error: .{1,120}$/.test(await preview(2).locator('.wiki-mermaid-note').innerText()) && (await preview(2).locator('svg').count()) === 0, await preview(2).innerText());
+    await mp.waitForTimeout(500);
+    const hostile = await mp.evaluate(() => ({ pwned: window.__pwned ?? null, foreign: document.querySelectorAll('.ProseMirror foreignObject, .ProseMirror script, .ProseMirror iframe').length }));
+    expect('hostile diagrams in the editor run nothing', hostile.pwned === null && hostile.foreign === 0, JSON.stringify(hostile));
+    await shot(mp, 'wiki-editor-mermaid-desktop');
+
+    // Type in the first block: the diagram follows once typing stops.
+    const firstCode = blocks.nth(0).locator('pre code');
+    await firstCode.click();
+    // The cursor at the end of the first block's code.
+    await mp.evaluate(() => {
+      const code = document.querySelector('.ProseMirror .wiki-code-block pre code');
+      const r = document.createRange();
+      r.selectNodeContents(code);
+      r.collapse(false);
+      const s = window.getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+    });
+    await mp.keyboard.type(' --> extra[Added in preview]');
+    await mp.waitForFunction(() => document.querySelector('.ProseMirror .wiki-mermaid-preview svg')?.textContent.includes('Added in preview'), null, { timeout: 15000 }).catch(() => {});
+    expect('edit the code: the preview redraws with the change', (await preview(0).locator('svg').textContent()).includes('Added in preview'));
+    // Break it: the last good diagram stays, with the note.
+    await mp.keyboard.type(' --> ((');
+    await settled(0, 'error');
+    expect(
+      'a syntax error: "Diagram has an error" and the last good diagram kept',
+      /^Diagram has an error:/.test(await preview(0).locator('.wiki-mermaid-note').innerText().catch(() => '')) && (await preview(0).locator('svg').textContent()).includes('Added in preview'),
+      await preview(0).innerText(),
+    );
+    await shot(mp, 'wiki-editor-mermaid-error-desktop');
+    for (let i = 0; i < ' --> (('.length; i += 1) await mp.keyboard.press('Backspace');
+    await settled(0, 'drawn');
+    expect('fixed again: the note goes', (await preview(0).getAttribute('data-mermaid-preview')) === 'drawn' && (await preview(0).locator('.wiki-mermaid-note').isHidden()));
+    // Hide and show.
+    await preview(0).locator('.wiki-mermaid-toggle').click();
+    expect('"Hide preview" hides the diagram', (await preview(0).locator('.wiki-mermaid-diagram').isHidden()) && (await preview(0).locator('.wiki-mermaid-toggle').innerText()) === 'Show preview');
+    await preview(0).locator('.wiki-mermaid-toggle').click();
+    expect('"Show preview" shows it again', await preview(0).locator('.wiki-mermaid-diagram').isVisible());
+
+    // A new code block from the toolbar, given the language mermaid: its preview starts. It goes
+    // in after the paragraph under "Prerequisites".
+    await mpm.locator(':scope > p').first().click();
+    await mp.keyboard.press('End');
+    await mp.keyboard.press('Enter');
+    await mp.getByRole('button', { name: 'Code block' }).click();
+    await mp.keyboard.type('flowchart LR\n  new1[New block] --> new2[Drawn]');
+    const newBlock = blocks.first();
+    await newBlock.locator('.wiki-code-language').fill('mermaid');
+    await newBlock.locator('.wiki-code-language').press('Enter');
+    await mp.waitForFunction(() => [...document.querySelectorAll('.ProseMirror .wiki-mermaid-preview svg')].some((s) => s.textContent.includes('New block')), null, { timeout: 15000 }).catch(() => {});
+    expect('toolbar code block + language "mermaid": the preview starts', (await newBlock.locator('.wiki-mermaid-preview svg').textContent().catch(() => '')).includes('New block'));
+
+    // Round trip: Markdown mode and back, then save.
+    await mp.getByRole('button', { name: 'Markdown' }).click();
+    await mp.locator('.cm-content').waitFor({ timeout: 10000 }).catch(() => {});
+    expect('markdown mode shows no preview', (await mp.locator('.wiki-mermaid-preview').count()) === 0);
+    await mp.getByRole('button', { name: 'Visual' }).click();
+    await mpm.waitFor({ timeout: 10000 }).catch(() => {});
+    await mp.locator('[data-wiki-save]').click();
+    await mp.locator('[data-wiki-saved]').waitFor({ timeout: 5000 }).catch(() => {});
+    const mermaidBody = wikiApiCalls(mp).saves[0]?.meta?.body ?? '';
+    const sourceBody = await mp.evaluate(() => fetch('https://vault.abucnasty.dev/wiki/setting-up-arch-to-run-factorio.md').then((r) => r.text()));
+    // The house style ends a paragraph without the fixture's trailing space (any edit rewrites it so).
+    const expected = sourceBody
+      .replace(/ +\n/g, '\n')
+      .replace(MERMAID[0], `${MERMAID[0]} --> extra[Added in preview]`)
+      .replace('\n\n![64x64', '\n\n```mermaid\nflowchart LR\n  new1[New block] --> new2[Drawn]\n```\n\n![64x64');
+    expect('save: the markdown is the source plus the edits, nothing from the preview', mermaidBody === expected, JSON.stringify(mermaidBody.slice(0, 600)) + ' vs ' + JSON.stringify(expected.slice(0, 600)));
 
     // A new page from /wiki/all.
     const all = await open('/wiki/all', 'desktop', { wiki: 'editor' });

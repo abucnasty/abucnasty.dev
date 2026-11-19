@@ -23,6 +23,7 @@ import { Plugin, PluginKey, TextSelection } from '@milkdown/prose/state';
 import type { EditorView } from '@milkdown/prose/view';
 import { $node, $prose, $remark, callCommand } from '@milkdown/utils';
 import type { MarkdownNode } from '@milkdown/transformer';
+import { CodeBlockView } from './codeBlockView';
 import { applyLink, linkTarget, removeLink, type LinkTarget } from './links';
 import { remarkWiki, wikiStringifyOptions } from './markdown';
 
@@ -159,6 +160,10 @@ function hooks(callbacks: VisualCallbacks) {
           },
         }),
         props: {
+          // A code block's language field, and a ```mermaid block's live diagram (codeBlockView.ts).
+          nodeViews: {
+            code_block: (node, view, getPos) => new CodeBlockView(node, view, getPos),
+          },
           handleTextInput(view, from, _to, text) {
             if (text !== '[' || from < 1 || view.state.doc.textBetween(from - 1, from) !== '[') return false;
             // `[[`: remove the first `[` and let the picker insert the link.

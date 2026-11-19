@@ -1,7 +1,8 @@
 // ```mermaid code blocks drawn as diagrams, on a wiki page (the Arch page's diagrams in
 // fixtures/wiki.cjs) and in a blog post (the hidden post in fixtures/blog.cjs): they draw, wide
-// ones scroll inside their box on a phone, a broken one falls back to its code, hostile ones run
-// nothing, and pages without a diagram do not download mermaid.
+// ones scroll inside their box on a phone, they are flat (no gradients or shadows), a broken one
+// falls back to its code, hostile ones run nothing, and pages without a diagram do not download
+// mermaid.
 const { MERMAID } = require('../fixtures/wiki.cjs');
 
 const MERMAID_CHUNK = /\/assets\/mermaid-[\w-]+\.js$/;
@@ -44,6 +45,14 @@ module.exports = {
       expect(`${viewport}: every mermaid block on the page is handled`, found.length === MERMAID.length, JSON.stringify(found.map((d) => d.state)));
       const [fits, wide, broken] = found;
       expect(`${viewport}: a flowchart draws as an SVG with its labels`, fits?.state === 'drawn' && fits.svg && fits.text.includes('Save file') && fits.code === null, JSON.stringify(fits));
+      // The flat look (src/mermaid.ts): no gradients, no drop shadows.
+      const look = await page.$$eval('main .mermaid-diagram svg', (svgs) => ({
+        looks: [...new Set(svgs.flatMap((s) => [...s.querySelectorAll('[data-look]')].map((e) => e.getAttribute('data-look'))))],
+        gradients: svgs.reduce((n, s) => n + s.querySelectorAll('linearGradient, radialGradient').length, 0),
+        filters: svgs.flatMap((s) => [...s.querySelectorAll('filter')].map((f) => f.id)),
+        shadowed: svgs.flatMap((s) => [...s.querySelectorAll('*')].filter((e) => getComputedStyle(e).filter !== 'none').map((e) => `${e.tagName}.${e.getAttribute('class')} ${getComputedStyle(e).filter}`)),
+      }));
+      expect(`${viewport}: diagrams are flat: no gradients, no drop-shadow filters`, look.gradients === 0 && look.filters.length === 0 && look.shadowed.length === 0 && !look.looks.includes('neo'), JSON.stringify(look));
       expect(`${viewport}: a wide flowchart draws`, wide?.state === 'drawn' && wide.svg, JSON.stringify(wide));
       if (viewport === 'phone') {
         expect('phone: a wide diagram scrolls inside its box', wide && wide.scrollWidth > wide.boxWidth, JSON.stringify(wide));
