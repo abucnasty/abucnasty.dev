@@ -6,6 +6,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import Markdown from 'react-markdown';
 import { findWikiAlias, normaliseWikiIndex, resolveWikiFile, resolveWikiHref, wikiFolders, youtubeVideo, type WikiIndex } from '../src/wikiCore.ts';
+import { mermaidSource } from '../src/markdownMermaid.ts';
 import { prepareWikiSource, wikiMarkdownOptions } from '../src/wikiMarkdown.ts';
 import { matchRoute, wikiPreview, wikiRedirect } from './previews.ts';
 
@@ -113,6 +114,21 @@ test('sanitising: raw HTML, script and javascript: URLs do not survive', () => {
   );
   assert.doesNotMatch(html, /<script|onerror|javascript:|<iframe|evil\.example|data-youtube|<div/i, html);
   assert.match(html, /click/);
+});
+
+test('a ```mermaid block survives sanitising as code (drawn in the browser); its source is found, other code is not', () => {
+  const diagram = 'flowchart TD\n  A["<script>alert(1)</script>"] --> B\n  %% a mermaid comment, not an Obsidian one';
+  const found: (string | undefined)[] = [];
+  const html = renderToStaticMarkup(
+    createElement(Markdown, {
+      ...wikiMarkdownOptions({ index, page: page('how-to-benchmark') }),
+      components: { pre: ({ node, children }) => (found.push(mermaidSource(node)), createElement('pre', null, children)) },
+      children: prepareWikiSource(['```mermaid', diagram, '```', '', '```js', 'let a = 1;', '```', '', '    indented'].join('\n')),
+    }),
+  );
+  assert.match(html, /<code class="language-mermaid">flowchart TD/);
+  assert.doesNotMatch(html, /<script/);
+  assert.deepEqual(found, [`${diagram}\n`, undefined, undefined]);
 });
 
 test('callouts, comments, GFM and YouTube paragraphs', () => {

@@ -63,6 +63,32 @@ const index = {
 
 const filler = 'Benchmarks compare how many updates per second a save reaches over a fixed number of ticks. '.repeat(3);
 
+/** The Arch page's ```mermaid blocks, in order: fits, wide, invalid, then two hostile ones. */
+const MERMAID = [
+  ['flowchart TD', '  save[Save file] --> belt[belt] --> csv[CSV] --> site[This site]'].join('\n'),
+  [
+    'flowchart LR',
+    '  a1[Download the headless server] --> a2[Unpack it into /opt/factorio] --> a3[Copy every save file] --> a4[Run belt over each save] --> a5[Collect the CSV files] --> a6[Plot the results] --> a7[Publish them on the site]',
+  ].join('\n'),
+  ['flowchart LR', '  A[Start --> ((B', '  this is not a diagram'].join('\n'),
+  [
+    '%%{init: {"securityLevel": "loose", "htmlLabels": true, "dompurifyConfig": {"ADD_TAGS": ["script", "iframe"], "ADD_ATTR": ["onerror", "onload"]}}}%%',
+    'flowchart TD',
+    '  A["<img src=x onerror=window.__pwned=\'img\'>"] --> B["<script>window.__pwned=\'script\'</script>"]',
+    '  B --> C["<a href=\'javascript:window.__pwned=1\'>link</a>"]',
+    '  C --> D["<iframe srcdoc=\'<script>parent.__pwned=1</script>\'></iframe>"]',
+    '  click A href "javascript:window.__pwned=\'click-href\'"',
+    '  click B call eval("window.__pwned=\'click-call\'")',
+    '  click C eval "tip"',
+  ].join('\n'),
+  [
+    'sequenceDiagram',
+    '  participant A as <img src=x onerror="window.__pwned=\'seq\'">',
+    '  A->>B: <script>window.__pwned=\'seq-script\'</script>',
+    '  link A: Evil @ javascript:window.__pwned=\'seq-link\'',
+  ].join('\n'),
+];
+
 /** Each page's markdown, as the vault publishes it (frontmatter and comments removed). */
 const markdown = {
   home: [
@@ -111,6 +137,9 @@ const markdown = {
     '',
     '![64x64 Factorio logo](_attachments/engineer_q5.png)',
     '',
+    // Diagrams (scripts/check/pages/mermaid.cjs): one that fits, one wider than a phone, one with
+    // a syntax error, and two that try to run script.
+    ...MERMAID.flatMap((d) => ['```mermaid', d, '```', '']),
   ].join('\n'),
 };
 
@@ -157,4 +186,4 @@ function serve(path) {
   return null;
 }
 
-module.exports = { index, markdown, serve, drafts, draftMarkdown };
+module.exports = { index, markdown, serve, drafts, draftMarkdown, MERMAID };
