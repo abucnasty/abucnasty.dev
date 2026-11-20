@@ -268,9 +268,9 @@ export function BenchmarkDetail() {
             {benchmark.factorioVersions?.map((v) => (
               <Chip key={v} size="small" variant="outlined" label={`Factorio ${v}`} />
             ))}
-            {benchmark.platform && (
-              <Chip size="small" variant="outlined" label={formatPlatform(benchmark.platform)} />
-            )}
+            {benchmark.platforms?.map((p) => (
+              <Chip key={p} size="small" variant="outlined" label={formatPlatform(p)} />
+            ))}
             {benchmark.cpu && <Chip size="small" variant="outlined" label={benchmark.cpu} />}
             {benchmark.authors && benchmark.authors.length > 0 && (
               <Chip size="small" variant="outlined" label={`By ${benchmark.authors.join(', ')}`} />

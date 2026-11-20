@@ -232,7 +232,7 @@ async function main() {
          * A new browser context at `urlPath`. `opts.wiki` is who the wiki API stand-in says is
          * signed in (see fixtures/wiki-api.cjs); signed out by default. `opts.benchmarkAuthors` maps
          * benchmark slugs to an `authors` list the page is served with (see fixtures/benchmark-meta.cjs);
-         * `opts.benchmarkVersions` does the same for the `factorioVersions` list (fixtures/benchmark-versions.cjs).
+         * `opts.benchmarkVersions` and `opts.benchmarkPlatforms` do the same for the `factorioVersions` and `platforms` lists (fixtures/benchmark-versions.cjs).
          */
         async open(urlPath, viewport = 'desktop', opts = {}) {
           if (!VIEWPORTS[viewport]) throw new Error(`unknown viewport "${viewport}"`);
@@ -246,6 +246,7 @@ async function main() {
           await catalogFixture.install(context);
           if (opts.benchmarkAuthors) await benchmarkMetaFixture.install(context, opts.benchmarkAuthors);
           if (opts.benchmarkVersions) await benchmarkVersionsFixture.install(context, opts.benchmarkVersions);
+          if (opts.benchmarkPlatforms) await benchmarkVersionsFixture.install(context, opts.benchmarkPlatforms, 'platforms');
           const wikiApi = await wikiApiFixture.install(context, base, opts.wiki);
           const page = await context.newPage();
           apiCalls.set(page, wikiApi);

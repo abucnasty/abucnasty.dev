@@ -11,7 +11,7 @@
  *   date: 2025-11-11         # optional, YYYY-MM-DD; read only when there is no published_date
  *   factorioVersion: "2.0.72" # optional, quoted text, or a list of quoted text (["2.0.55", "2.1.9"]) for a
  *                            # benchmark that compares versions; else the README's `**Factorio Version:**` line
- *   platform: linux-x86_64   # optional; else the `**Platform:**` line
+ *   platform: linux-x86_64   # optional, text or a list of text ([windows-x86_64, linux-x86_64]); else the `**Platform:**` line
  *   cpu: Ryzen 9800X3D       # optional; else the `**CPU:**` line
  *   authors: [abucnasty]     # required; a non-empty list of names, kept in order; never defaulted
  *   featured: 1              # optional; position in the home page's Featured list
@@ -47,6 +47,20 @@ const VERSION = /^\d+(\.\d+)+$/;
 export function versionList(value) {
   const items = Array.isArray(value) ? value : [value];
   const list = [...new Set(items.filter((v) => typeof v === 'string' && v.trim()).map((v) => v.trim()))];
+  return list.length > 0 ? list : undefined;
+}
+
+/**
+ * The platforms a `platform` value names, in the order written, a repeat dropped: a text is split on
+ * commas (the old "windows-x86_64, linux-x86_64" form), a list is its non-blank texts. `undefined`
+ * when there is none. Lenient, like `versionList`.
+ *
+ * @param {unknown} value
+ * @returns {string[] | undefined}
+ */
+export function platformList(value) {
+  const items = (Array.isArray(value) ? value : [value]).flatMap((v) => (typeof v === 'string' ? v.split(',') : []));
+  const list = [...new Set(items.map((v) => v.trim()).filter(Boolean))];
   return list.length > 0 ? list : undefined;
 }
 
@@ -137,9 +151,11 @@ export function discoverBenchmarks(repoPath, topicIds) {
     if (factorioVersion !== undefined && !(versionItems.length > 0 && versionItems.every((v) => typeof v === 'string' && VERSION.test(v)))) {
       fail(`"factorioVersion" must be text like "2.0.72", or a non-empty list of such text (quote each, or YAML reads 2.1 as a number), not ${JSON.stringify(factorioVersion)}`);
     }
-    for (const [key, value] of [['platform', platform], ['cpu', cpu]]) {
-      if (value !== undefined && !(typeof value === 'string' && value.trim())) fail(`"${key}" must be non-empty text, not ${JSON.stringify(value)}`);
+    const platformItems = Array.isArray(platform) ? platform : [platform];
+    if (platform !== undefined && !(platformItems.length > 0 && platformItems.every((p) => typeof p === 'string' && p.trim()))) {
+      fail(`"platform" must be non-empty text, or a list of non-empty text, not ${JSON.stringify(platform)}`);
     }
+    if (cpu !== undefined && !(typeof cpu === 'string' && cpu.trim())) fail(`"cpu" must be non-empty text, not ${JSON.stringify(cpu)}`);
     if (authors === undefined) fail('missing required field "authors"');
     if (!(Array.isArray(authors) && authors.length > 0 && authors.every((a) => typeof a === 'string' && a.trim()))) {
       fail(`"authors" must be a non-empty list of names (text), not ${JSON.stringify(authors)}`);
@@ -161,7 +177,7 @@ export function discoverBenchmarks(repoPath, topicIds) {
         slug, source, title, topic,
         date: resolveDate({ published_date, date }),
         featured: isFeatured || undefined, summary, tags, chart,
-        factorioVersions: versionList(factorioVersion), platform: platform?.trim(), cpu: cpu?.trim(), authors,
+        factorioVersions: versionList(factorioVersion), platforms: platformList(platform), cpu: cpu?.trim(), authors,
       },
     });
   }

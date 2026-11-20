@@ -9,7 +9,7 @@ const words = (s) => s.toLowerCase().split(/\s+/).filter(Boolean);
 
 // Same haystack as staticEntries() in src/search.ts.
 function benchmarkHaystack(b, topicLabels) {
-  return [b.title, b.question, b.finding, b.summary, b.topic ? topicLabels.get(b.topic) : '', ...(b.factorioVersions ?? []), b.platform, b.cpu]
+  return [b.title, b.question, b.finding, b.summary, b.topic ? topicLabels.get(b.topic) : '', ...(b.factorioVersions ?? []), ...(b.platforms ?? []), b.cpu]
     .filter(Boolean)
     .join('\n')
     .toLowerCase();

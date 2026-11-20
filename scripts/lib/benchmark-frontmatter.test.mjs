@@ -33,12 +33,12 @@ describe('version, platform, cpu', () => {
   it('are accepted and returned on the entry', () => {
     const e = one('factorioVersion: "2.0.72"\nplatform: windows-x86_64\ncpu: Ryzen 9800X3D');
     assert.deepEqual(e.factorioVersions, ['2.0.72']);
-    assert.equal(e.platform, 'windows-x86_64');
+    assert.deepEqual(e.platforms, ['windows-x86_64']);
     assert.equal(e.cpu, 'Ryzen 9800X3D');
   });
   it('are absent from the entry when the README has none', () => {
     const e = one('');
-    for (const k of ['factorioVersions', 'factorioVersion', 'platform', 'cpu']) assert.equal(k in e, false, k);
+    for (const k of ['factorioVersions', 'factorioVersion', 'platforms', 'platform', 'cpu']) assert.equal(k in e, false, k);
   });
   it('refuse a YAML number as version and say to quote it', () => {
     refused('factorioVersion: 2.1', /a\/README\.md: "factorioVersion" must be text like "2\.0\.72".*quote/);
@@ -65,6 +65,23 @@ describe('version, platform, cpu', () => {
     refused('factorioVersion: [{a: "2.0.55"}]', message);
     refused('factorioVersion: 2.1', message);
     refused('factorioVersion: ""', message);
+  });
+  it('take platforms as a list, a one-item list, a plain string and the old comma string', () => {
+    assert.deepEqual(one('platform: [windows-x86_64, linux-x86_64]').platforms, ['windows-x86_64', 'linux-x86_64']);
+    assert.deepEqual(one('platform: [linux-x86_64]').platforms, ['linux-x86_64']);
+    assert.deepEqual(one('platform: linux-x86_64').platforms, ['linux-x86_64']);
+    assert.deepEqual(one('platform: "windows-x86_64, linux-x86_64"').platforms, ['windows-x86_64', 'linux-x86_64']);
+  });
+  it('drop a repeated platform and keep the first', () => {
+    assert.deepEqual(one('platform: [linux-x86_64, windows-x86_64, linux-x86_64]').platforms, ['linux-x86_64', 'windows-x86_64']);
+  });
+  it('refuse an empty platform list, an empty item and a non-text item', () => {
+    const message = /"platform" must be non-empty text, or a list of non-empty text/;
+    refused('platform: []', message);
+    refused('platform: [""]', message);
+    refused('platform: ["linux-x86_64", 5]', message);
+    refused('platform: [["linux-x86_64"]]', message);
+    refused('platform: [{a: b}]', message);
   });
   it('refuse an empty platform or cpu', () => {
     refused('platform: ""', /"platform" must be non-empty text/);

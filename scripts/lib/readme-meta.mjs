@@ -1,11 +1,11 @@
 /**
  * Where a benchmark's Factorio version, platform and CPU come from. The README's frontmatter
- * (`factorioVersion`, a text or a list of texts; `platform`; `cpu`) is read first; the `**Factorio Version:**` / `**Platform:**` /
+ * (`factorioVersion`, a text or a list of texts; `platform`, a text or a list of texts; `cpu`) is read first; the `**Factorio Version:**` / `**Platform:**` /
  * `**CPU:**` header lines of older READMEs are the fallback, value by value (the version line as a
- * one-item list). Shared by the
+ * one-item list, the platform line split on commas). Shared by the
  * per-benchmark sync and the save index so both read a README the same way.
  */
-import { resolveDate, splitFrontmatter, versionList } from './benchmark-frontmatter.mjs';
+import { resolveDate, platformList, splitFrontmatter, versionList } from './benchmark-frontmatter.mjs';
 
 export { resolveDate };
 
@@ -34,7 +34,7 @@ export function parseReadmeMeta(markdown) {
  * `discoverBenchmarks`).
  *
  * @param {string} markdown
- * @returns {{ factorioVersions?: string[], platform?: string, cpu?: string, publishedDate?: string }}
+ * @returns {{ factorioVersions?: string[], platforms?: string[], cpu?: string, publishedDate?: string }}
  */
 export function readmeMeta(markdown) {
   let data = null;
@@ -48,7 +48,7 @@ export function readmeMeta(markdown) {
   const header = parseReadmeMeta(body);
   return {
     factorioVersions: versionList(data?.factorioVersion) ?? versionList(header.factorioVersion),
-    platform: text(data?.platform) ?? header.platform,
+    platforms: platformList(data?.platform) ?? platformList(header.platform),
     cpu: text(data?.cpu) ?? header.cpu,
     publishedDate: text(data?.published_date),
   };

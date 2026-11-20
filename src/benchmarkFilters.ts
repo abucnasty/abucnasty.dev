@@ -62,7 +62,7 @@ export function isFiltered(filters: BenchmarkFilters): boolean {
 
 /** Lower-cased text the free-text filter and the site search both match a benchmark against. */
 export function benchmarkMatchText(b: BenchmarkSummary, topicLabel: string | undefined): string {
-  return [b.title, b.question, b.finding, b.summary, topicLabel, ...(b.factorioVersions ?? []), b.platform, b.cpu]
+  return [b.title, b.question, b.finding, b.summary, topicLabel, ...(b.factorioVersions ?? []), ...(b.platforms ?? []), b.cpu]
     .filter(Boolean)
     .join('\n')
     .toLowerCase();

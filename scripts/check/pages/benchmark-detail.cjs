@@ -67,6 +67,13 @@ module.exports = {
     // Source READMEs that used to carry their own contents list.
     const hadToc = ['pollution-control', 'chests'].map((s) => list.find((b) => b.slug === s)).filter(Boolean);
 
+    const platformLabel = (raw) => {
+      const l = raw.toLowerCase();
+      if (l.includes('windows') || l.startsWith('win')) return 'Windows';
+      if (l.includes('linux')) return 'Linux';
+      if (l.includes('mac') || l.includes('darwin')) return 'macOS';
+      return raw;
+    };
     const cases = [['newest benchmark', newest]];
     if (withCharts) cases.push(['benchmark with charts', withCharts]);
     else expect('index has a benchmark with timeseries', false, 'nothing to check the charts tab against');
@@ -112,6 +119,9 @@ module.exports = {
         // Header chips.
         const chips = page.locator('main header ~ div .MuiChip-root');
         const chipTexts = (await chips.allTextContents()).map((t) => t.trim());
+        for (const p of b.platforms ?? []) {
+          expect(`${label}: chip "${platformLabel(p)}" for platform ${p}`, chipTexts.includes(platformLabel(p)), chipTexts.join(' | '));
+        }
         for (const v of b.factorioVersions ?? []) {
           expect(`${label}: chip "Factorio ${v}"`, chipTexts.includes(`Factorio ${v}`), chipTexts.join(' | '));
         }
@@ -379,6 +389,19 @@ module.exports = {
         await p1.waitForSelector('main h1', { timeout: 10000 });
         const got1 = await versionChips(p1);
         expect(`versions (${viewport}): one version shows as one chip`, JSON.stringify(got1) === JSON.stringify(['Factorio 2.1.24']), got1.join(' | '));
+      }
+    }
+
+    // One chip per platform: linux and windows together (the live linux-vs-windows page used to show only Windows).
+    if (list.length >= 1) {
+      const target = linuxVsWindows ?? list[0];
+      const platformsBySlug = { [target.slug]: ['windows-x86_64', 'linux-x86_64'] };
+      for (const viewport of ['desktop', 'phone']) {
+        const pg = await open(`/benchmarks/${target.slug}`, viewport, { benchmarkPlatforms: platformsBySlug });
+        await pg.waitForSelector('main h1', { timeout: 10000 });
+        const chips = (await pg.locator('main header ~ div .MuiChip-root').allTextContents()).map((t) => t.trim());
+        expect(`platforms (${viewport}): two platforms show as Windows and Linux chips`, chips.includes('Windows') && chips.includes('Linux') && !chips.some((c) => c.includes(',')), chips.join(' | '));
+        if (viewport === 'desktop') await shot(pg, 'benchmark-platforms-desktop');
       }
     }
 
