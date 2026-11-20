@@ -9,7 +9,7 @@
     "build": "node scripts/sync-content.mjs && tsc -b && vite build",
     "preview": "vite preview",
     "lint": "tsc -b --noEmit",
-    "test": "node --test worker/*.test.ts",
+    "test": "node --test worker/*.test.ts scripts/lib/*.test.mjs",
     "check": "node scripts/check/run.cjs",
     "types:worker": "wrangler types worker/worker-configuration.d.ts --strict-vars=false",
     "deploy": "wrangler deploy"
