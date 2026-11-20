@@ -7,7 +7,12 @@
  *   slug: clocked-mining-drills   # required; the page is /benchmarks/<slug>
  *   title: Clocked Mining Drills  # required
  *   topic: mining            # optional; an id from `topics` in content/manifest.json
- *   date: 2025-11-11         # optional, YYYY-MM-DD
+ *   published_date: 2025-11-11  # optional, YYYY-MM-DD, the day it was published; wins over `date`
+ *   date: 2025-11-11         # optional, YYYY-MM-DD; read only when there is no published_date
+ *   factorioVersion: "2.0.72" # optional, quoted text; else the README's `**Factorio Version:**` line
+ *   platform: linux-x86_64   # optional; else the `**Platform:**` line
+ *   cpu: Ryzen 9800X3D       # optional; else the `**CPU:**` line
+ *   authors: [abucnasty]     # optional list of names; never defaulted
  *   featured: 1              # optional; position in the home page's Featured list
  *   chart: { ... }           # optional; interactive chart config (see ChartConfig in sync-content.mjs)
  *   ---
@@ -23,7 +28,29 @@ import { parse as parseYaml } from 'yaml';
 /** Folder of the source repo whose subfolders are scanned. */
 export const BENCHMARKS_DIR = 'benchmarks';
 
-const KEYS = new Set(['publish', 'slug', 'title', 'topic', 'date', 'featured', 'summary', 'tags', 'chart']);
+const KEYS = new Set([
+  'publish', 'slug', 'title', 'topic', 'published_date', 'date', 'featured', 'summary', 'tags', 'chart',
+  'factorioVersion', 'platform', 'cpu', 'authors',
+]);
+
+/** `YYYY-MM-DD` that is a day on the calendar (2026-02-30 and 2026-13-40 are not). */
+export function isRealDay(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [y, m, d] = value.split('-').map(Number);
+  const day = new Date(Date.UTC(y, m - 1, d));
+  return day.getUTCFullYear() === y && day.getUTCMonth() === m - 1 && day.getUTCDate() === d;
+}
+
+/**
+ * The one date of a benchmark: `published_date`, else the older `date`, else none.
+ * Every place that needs a benchmark's date goes through here.
+ *
+ * @param {{ published_date?: string, date?: string }} data
+ * @returns {string | undefined}
+ */
+export function resolveDate(data) {
+  return data.published_date ?? data.date;
+}
 
 /** `---` on the first line, YAML, `---`, and the one blank line that conventionally follows it. */
 const FRONTMATTER_RE = /^---[ \t]*\r?\n([\s\S]*?)\r?\n?^---[ \t]*(?:\r?\n|$)(?:[ \t]*\r?\n)?/m;
@@ -78,7 +105,7 @@ export function discoverBenchmarks(repoPath, topicIds) {
     };
     if (data.publish !== true) fail(`"publish" must be true or false, not ${JSON.stringify(data.publish)}`);
     for (const key of Object.keys(data)) if (!KEYS.has(key)) fail(`unknown frontmatter field "${key}" (known: ${[...KEYS].join(', ')})`);
-    const { slug, title, topic, date, featured, summary, tags, chart } = data;
+    const { slug, title, topic, published_date, date, featured, summary, tags, chart, factorioVersion, platform, cpu, authors } = data;
     if (typeof slug !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(slug)) {
       fail(slug === undefined ? 'missing required field "slug"' : `"slug" must be letters, digits, ".", "_" or "-", not ${JSON.stringify(slug)}`);
     }
@@ -86,8 +113,17 @@ export function discoverBenchmarks(repoPath, topicIds) {
     if (topic !== undefined && (typeof topic !== 'string' || (topicIds && !topicIds.has(topic)))) {
       fail(`topic ${JSON.stringify(topic)} is not in "topics" in content/manifest.json`);
     }
-    if (date !== undefined && (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date))) {
-      fail(`"date" must be YYYY-MM-DD, not ${JSON.stringify(date)}`);
+    for (const [key, value] of [['published_date', published_date], ['date', date]]) {
+      if (value !== undefined && !isRealDay(value)) fail(`"${key}" must be a real day as YYYY-MM-DD, not ${JSON.stringify(value)}`);
+    }
+    if (factorioVersion !== undefined && !(typeof factorioVersion === 'string' && /^\d+(\.\d+)+$/.test(factorioVersion))) {
+      fail(`"factorioVersion" must be text like "2.0.72" (quote it, or YAML reads 2.1 as a number), not ${JSON.stringify(factorioVersion)}`);
+    }
+    for (const [key, value] of [['platform', platform], ['cpu', cpu]]) {
+      if (value !== undefined && !(typeof value === 'string' && value.trim())) fail(`"${key}" must be non-empty text, not ${JSON.stringify(value)}`);
+    }
+    if (authors !== undefined && !(Array.isArray(authors) && authors.length > 0 && authors.every((a) => typeof a === 'string' && a.trim()))) {
+      fail(`"authors" must be a non-empty list of names (text), not ${JSON.stringify(authors)}`);
     }
     if (featured !== undefined && featured !== true && featured !== false && !(Number.isInteger(featured) && featured > 0)) {
       fail(`"featured" must be a positive whole number (its place in the Featured list) or true, not ${JSON.stringify(featured)}`);
@@ -102,7 +138,12 @@ export function discoverBenchmarks(repoPath, topicIds) {
     const isFeatured = featured !== undefined && featured !== false;
     entries.push({
       rank: isFeatured ? (featured === true ? Infinity : featured) : undefined,
-      entry: { slug, source, title, topic, date, featured: isFeatured || undefined, summary, tags, chart },
+      entry: {
+        slug, source, title, topic,
+        date: resolveDate({ published_date, date }),
+        featured: isFeatured || undefined, summary, tags, chart,
+        factorioVersion, platform: platform?.trim(), cpu: cpu?.trim(), authors,
+      },
     });
   }
 

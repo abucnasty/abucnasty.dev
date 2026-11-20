@@ -331,6 +331,34 @@ module.exports = {
       }
     }
 
+    // Authors chip: "By a, b" beside version, platform and cpu; nothing when the index has no authors.
+    if (list.length >= 3) {
+      const [two, one, none] = list;
+      const authorsBySlug = { [two.slug]: ['abucnasty', 'tappi'], [one.slug]: ['abucnasty'] };
+      const chipsOf = async (page) => (await page.locator('main header ~ div .MuiChip-root').allTextContents()).map((t) => t.trim());
+      for (const viewport of ['desktop', 'phone']) {
+        const p2 = await open(`/benchmarks/${two.slug}`, viewport, { benchmarkAuthors: authorsBySlug });
+        await p2.waitForSelector('main h1', { timeout: 10000 });
+        const chips2 = await chipsOf(p2);
+        expect(`authors (${viewport}): two authors show as one chip`, chips2.includes('By abucnasty, tappi'), chips2.join(' | '));
+        const row = p2.locator('main header ~ div').first();
+        const chipBox = await p2.locator('.MuiChip-root', { hasText: 'By abucnasty, tappi' }).boundingBox();
+        const rowBox = await row.boundingBox();
+        expect(`authors (${viewport}): the chip sits in the conditions row`, chipBox && rowBox && chipBox.y >= rowBox.y - 1 && chipBox.y + chipBox.height <= rowBox.y + rowBox.height + 1, JSON.stringify({ chipBox, rowBox }));
+        if (viewport === 'desktop') await shot(p2, 'benchmark-authors');
+
+        const p1 = await open(`/benchmarks/${one.slug}`, viewport, { benchmarkAuthors: authorsBySlug });
+        await p1.waitForSelector('main h1', { timeout: 10000 });
+        const chips1 = await chipsOf(p1);
+        expect(`authors (${viewport}): one author shows as a chip`, chips1.includes('By abucnasty'), chips1.join(' | '));
+
+        const p0 = await open(`/benchmarks/${none.slug}`, viewport, { benchmarkAuthors: authorsBySlug });
+        await p0.waitForSelector('main h1', { timeout: 10000 });
+        const chips0 = await chipsOf(p0);
+        expect(`authors (${viewport}): no authors in the index, no chip`, !chips0.some((c) => c.startsWith('By ')), chips0.join(' | '));
+      }
+    }
+
     // Moving between two benchmark pages never shows the previous question.
     if (withQA && noQuestion) {
       const page = await open(`/benchmarks/${withQA.slug}`, 'desktop');

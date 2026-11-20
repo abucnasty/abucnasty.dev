@@ -13,6 +13,7 @@ const catalogFixture = require('./fixtures/catalog.cjs');
 const blogFixture = require('./fixtures/blog.cjs');
 const wikiFixture = require('./fixtures/wiki.cjs');
 const wikiApiFixture = require('./fixtures/wiki-api.cjs');
+const benchmarkMetaFixture = require('./fixtures/benchmark-meta.cjs');
 
 const root = path.resolve(__dirname, '..', '..');
 const pagesDir = path.join(__dirname, 'pages');
@@ -227,7 +228,8 @@ async function main() {
         data,
         /**
          * A new browser context at `urlPath`. `opts.wiki` is who the wiki API stand-in says is
-         * signed in (see fixtures/wiki-api.cjs); signed out by default.
+         * signed in (see fixtures/wiki-api.cjs); signed out by default. `opts.benchmarkAuthors` maps
+         * benchmark slugs to an `authors` list the page is served with (see fixtures/benchmark-meta.cjs).
          */
         async open(urlPath, viewport = 'desktop', opts = {}) {
           if (!VIEWPORTS[viewport]) throw new Error(`unknown viewport "${viewport}"`);
@@ -239,6 +241,7 @@ async function main() {
           contexts.push(context);
           await context.route((url) => url.origin !== base, offline);
           await catalogFixture.install(context);
+          if (opts.benchmarkAuthors) await benchmarkMetaFixture.install(context, opts.benchmarkAuthors);
           const wikiApi = await wikiApiFixture.install(context, base, opts.wiki);
           const page = await context.newPage();
           apiCalls.set(page, wikiApi);
