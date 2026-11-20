@@ -9,7 +9,81 @@
  * belt-charts/src/data/BenchmarkTickResult.ts (per-tick mean across runs).
  */
 import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
+import { PassThrough, pipeline } from 'node:stream';
+import { createGunzip, createZstdDecompress } from 'node:zlib';
+
+/** Result file endings, in the order a missing file falls back to its sibling. */
+const RESULT_ENDINGS = ['.csv', '.csv.zst', '.csv.gz'];
+
+async function isFile(p) {
+  try {
+    return (await stat(p)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find the file for a CSV path that may be stored as `x.csv`, `x.csv.zst` or
+ * `x.csv.gz`. The named file wins; when it is missing, its siblings are tried
+ * in the order .csv, .csv.zst, .csv.gz. Returns null when none exists.
+ *
+ * @param {string} namedPath
+ * @returns {Promise<string | null>}
+ */
+export async function resolveResultFile(namedPath) {
+  if (await isFile(namedPath)) return namedPath;
+  const ending = RESULT_ENDINGS.find((e) => namedPath.endsWith(e));
+  if (!ending) return null;
+  const stem = namedPath.slice(0, -ending.length);
+  for (const e of RESULT_ENDINGS) {
+    if (e !== ending && (await isFile(stem + e))) return stem + e;
+  }
+  return null;
+}
+
+/**
+ * Like {@link resolveResultFile}, but throws when no file exists. The error
+ * is `<msg> (looked at <namedPath>)`.
+ *
+ * @param {string} namedPath
+ * @param {string} msg
+ * @returns {Promise<string>}
+ */
+export async function requireResultFile(namedPath, msg) {
+  const found = await resolveResultFile(namedPath);
+  if (!found) throw new Error(`${msg} (looked at ${namedPath})`);
+  return found;
+}
+
+/**
+ * Open a result file as a stream of UTF-8 text, decompressing by extension
+ * (`.zst`, `.gz`) as it streams. A read or decompress error is rethrown with
+ * the file name.
+ *
+ * @param {string} filePath
+ * @returns {import('node:stream').Readable}
+ */
+function openResultText(filePath) {
+  const zst = filePath.endsWith('.zst');
+  const gz = filePath.endsWith('.gz');
+  const source = createReadStream(filePath);
+  if (!zst && !gz) {
+    source.setEncoding('utf8');
+    return source;
+  }
+  const decoder = zst ? createZstdDecompress() : createGunzip();
+  const out = new PassThrough({ encoding: 'utf8' });
+  decoder.pipe(out);
+  pipeline(source, decoder, (err) => {
+    if (err) {
+      out.destroy(new Error(`Cannot read ${zst ? 'zstd' : 'gzip'}-compressed results ${filePath}: ${err.message}`));
+    }
+  });
+  return out;
+}
 
 /**
  * @typedef {Object} AggregateOptions
@@ -55,7 +129,7 @@ export async function aggregateScenarioCsv(filePath, opts = {}) {
   const window = opts.window ?? 60;
   const allowed = new Set(opts.metrics ?? DEFAULT_METRICS);
 
-  const stream = createReadStream(filePath, { encoding: 'utf8' });
+  const stream = openResultText(filePath);
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
 
   /** @type {string[] | null} */
