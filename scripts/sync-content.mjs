@@ -38,7 +38,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { aggregateScenarioCsv } from './lib/aggregate.mjs';
-import { parseReadmeMeta } from './lib/readme-meta.mjs';
+import { readmeMeta } from './lib/readme-meta.mjs';
 import { discoverBenchmarks, splitFrontmatter } from './lib/benchmark-frontmatter.mjs';
 import { stripOwnToc } from './lib/strip-toc.mjs';
 import { findSection, removeSection, plainFirstParagraph } from './lib/readme-sections.mjs';
@@ -67,12 +67,12 @@ const SOURCE_REPO_PATH =
 /** @typedef {{ name: string, csv: string }} ChartScenario */
 /** @typedef {{ name: string, scenarios: ChartScenario[], metrics?: string[] }} ChartGroup */
 /** @typedef {{ scenarios?: ChartScenario[], groups?: ChartGroup[], metrics?: string[], removeFirstTicks?: number, maxTicks?: number, window?: number }} ChartConfig */
-/** @typedef {{ slug: string, source: string, title: string, date?: string, summary?: string, tags?: string[], topic?: string, featured?: boolean, chart?: ChartConfig }} BenchmarkEntry */
+/** @typedef {{ slug: string, source: string, title: string, date?: string, authors?: string[], summary?: string, tags?: string[], topic?: string, featured?: boolean, chart?: ChartConfig }} BenchmarkEntry */
 /** @typedef {{ id: string, label: string }} Topic */
 /** @typedef {{ sourceRepo: { owner: string, repo: string, branch: string }, lfsWorkerUrl?: string, topics?: Topic[] }} Manifest */
 
 /** Benchmark fields copied into src/generated/summary.json (see BenchmarkSummary in src/content.ts). */
-const SUMMARY_FIELDS = ['slug', 'title', 'date', 'summary', 'tags', 'featured', 'factorioVersion', 'platform', 'cpu', 'topic', 'question', 'finding'];
+const SUMMARY_FIELDS = ['slug', 'title', 'date', 'authors', 'summary', 'tags', 'featured', 'factorioVersion', 'platform', 'cpu', 'topic', 'question', 'finding'];
 
 /** Shortest text worth showing as a one-line finding. */
 const MIN_FINDING_LENGTH = 12;
@@ -216,8 +216,9 @@ async function syncBenchmark(entry, githubBase, branch, rawBase, treeBase, lfsWo
     }
 
     if (rel.toLowerCase() === 'readme.md') {
-      const { body: raw } = splitFrontmatter(await fs.readFile(absFile, 'utf8'), `${entry.source}/${rel}`);
-      ({ factorioVersion, platform, cpu } = parseReadmeMeta(raw));
+      const text = await fs.readFile(absFile, 'utf8');
+      const { body: raw } = splitFrontmatter(text, `${entry.source}/${rel}`);
+      ({ factorioVersion, platform, cpu } = readmeMeta(text));
       const rawGithubDir = `${rawBase}/${entry.source}`;
       // Order matters: strip the README's own contents list, lift the question and answer
       // sections, and only then rewrite assets and links, so all three files are rewritten alike.

@@ -17,7 +17,7 @@
  *   3. `git cat-file --batch` → contents of every pointer + README
  */
 import { execFileSync } from 'node:child_process';
-import { parseReadmeMeta } from './readme-meta.mjs';
+import { readmeMeta } from './readme-meta.mjs';
 
 const MAX_BUFFER = 256 * 1024 * 1024;
 /** LFS pointers are ~130 bytes; the spec caps them well under this. */
@@ -82,13 +82,14 @@ export function buildSaveIndex({ repoPath, lfsWorkerUrl, benchmarks, log = () =>
   for (const folder of folders) {
     const entry = bySource.get(folder);
     const readme = blobs.get(readmeOidByFolder.get(folder));
-    const { factorioVersion, platform } = readme ? parseReadmeMeta(readme.toString('utf8')) : {};
+    const { factorioVersion, platform, publishedDate } = readme ? readmeMeta(readme.toString('utf8')) : {};
     const datePrefix = folder.split('/')[1].match(/^(\d{4}-\d{2}-\d{2})-/);
     /** @type {SaveFolderMeta} */
     const m = {
       title: entry?.title,
       benchmark_slug: entry?.slug,
-      benchmark_date: entry?.date ?? datePrefix?.[1],
+      // entry.date is already the resolved date (published_date, else date); an unpublished folder's README can still carry published_date.
+      benchmark_date: entry?.date ?? publishedDate ?? datePrefix?.[1],
       factorio_version: factorioVersion,
       benchmark_machine_platform: platform,
     };

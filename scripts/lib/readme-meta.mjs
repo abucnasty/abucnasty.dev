@@ -1,7 +1,16 @@
 /**
+ * Where a benchmark's Factorio version, platform and CPU come from. The README's frontmatter
+ * (`factorioVersion`, `platform`, `cpu`) is read first; the `**Factorio Version:**` / `**Platform:**` /
+ * `**CPU:**` header lines of older READMEs are the fallback, value by value. Shared by the
+ * per-benchmark sync and the save index so both read a README the same way.
+ */
+import { resolveDate, splitFrontmatter } from './benchmark-frontmatter.mjs';
+
+export { resolveDate };
+
+/**
  * Pull the `**Factorio Version:**` / `**Platform:**` / `**CPU:**` header fields out of a
- * benchmark README. Shared by the per-benchmark sync and the save index so
- * both read the header the same way.
+ * benchmark README body.
  *
  * @param {string} markdown
  * @returns {{ factorioVersion?: string, platform?: string, cpu?: string }}
@@ -14,5 +23,32 @@ export function parseReadmeMeta(markdown) {
     factorioVersion: versionMatch ? versionMatch[1] : undefined,
     platform: platformMatch ? platformMatch[1].trim() : undefined,
     cpu: cpuMatch ? cpuMatch[1].trim() : undefined,
+  };
+}
+
+/**
+ * Version, platform and CPU of a whole README (frontmatter included), the frontmatter first and
+ * the header lines of the body second, plus its `published_date`. Never throws: a README whose
+ * frontmatter does not parse is read as plain text (the published ones are validated by
+ * `discoverBenchmarks`).
+ *
+ * @param {string} markdown
+ * @returns {{ factorioVersion?: string, platform?: string, cpu?: string, publishedDate?: string }}
+ */
+export function readmeMeta(markdown) {
+  let data = null;
+  let body = markdown;
+  try {
+    ({ data, body } = splitFrontmatter(markdown, 'README'));
+  } catch {
+    /* read it as plain text */
+  }
+  const text = (v) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+  const header = parseReadmeMeta(body);
+  return {
+    factorioVersion: text(data?.factorioVersion) ?? header.factorioVersion,
+    platform: text(data?.platform) ?? header.platform,
+    cpu: text(data?.cpu) ?? header.cpu,
+    publishedDate: text(data?.published_date),
   };
 }

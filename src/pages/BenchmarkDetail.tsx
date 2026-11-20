@@ -272,6 +272,9 @@ export function BenchmarkDetail() {
               <Chip size="small" variant="outlined" label={formatPlatform(benchmark.platform)} />
             )}
             {benchmark.cpu && <Chip size="small" variant="outlined" label={benchmark.cpu} />}
+            {benchmark.authors && benchmark.authors.length > 0 && (
+              <Chip size="small" variant="outlined" label={`By ${benchmark.authors.join(', ')}`} />
+            )}
             {hasSaves && (
               <Chip
                 size="small"

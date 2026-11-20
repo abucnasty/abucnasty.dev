@@ -19,13 +19,18 @@ export interface BenchmarkEntry {
   slug: string;
   source: string;
   title: string;
+  /** `YYYY-MM-DD`: the README's `published_date`, else its older `date`; absent when it has neither. */
   date?: string;
+  /** From the README's frontmatter `authors` (names, in order). Absent when the README has none: there is no default. */
+  authors?: string[];
   summary?: string;
   tags?: string[];
   featured?: boolean;
+  /** From the README's frontmatter `factorioVersion`, else its `**Factorio Version:**` header line. */
   factorioVersion?: string;
+  /** From the frontmatter `platform`, else the `**Platform:**` header line. */
   platform?: string;
-  /** From the README's `**CPU:**` header line, e.g. "Ryzen 9800X3D". */
+  /** From the frontmatter `cpu`, else the `**CPU:**` header line, e.g. "Ryzen 9800X3D". */
   cpu?: string;
   /** Id of an entry in `ContentIndex.topics`; set in the benchmark README's frontmatter. */
   topic?: string;
@@ -60,7 +65,7 @@ export interface ContentIndex {
 /** The fields of a benchmark the home page and site search use. */
 export type BenchmarkSummary = Pick<
   BenchmarkEntry,
-  'slug' | 'title' | 'date' | 'summary' | 'tags' | 'featured' | 'factorioVersion' | 'platform' | 'cpu' | 'topic' | 'question' | 'finding'
+  'slug' | 'title' | 'date' | 'authors' | 'summary' | 'tags' | 'featured' | 'factorioVersion' | 'platform' | 'cpu' | 'topic' | 'question' | 'finding'
 >;
 
 /**
