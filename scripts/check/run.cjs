@@ -24,6 +24,7 @@ const outDir = path.join(root, 'check-output');
 const AVATAR_ORIGIN = 'https://avatars.githubusercontent.com/';
 // Discord avatars of signed-in wiki editors (the wiki API fixture) get the same stand-in.
 const DISCORD_CDN = 'https://cdn.discordapp.com/';
+const IMGUR = 'https://i.imgur.com/'; // a benchmark README shows a cover picture from here
 // Wiki pages embed YouTube players (youtube-nocookie.com); the frame gets this empty page instead.
 const YOUTUBE_EMBED = 'https://www.youtube-nocookie.com/embed/';
 const AVATAR_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
@@ -188,7 +189,7 @@ async function main() {
       // page.route are registered later, so they win over this.
       const offline = (route) => {
         const req = route.request();
-        if (req.url().startsWith(AVATAR_ORIGIN) || req.url().startsWith(DISCORD_CDN)) return route.fulfill({ status: 200, contentType: 'image/png', body: AVATAR_PNG });
+        if (req.url().startsWith(AVATAR_ORIGIN) || req.url().startsWith(DISCORD_CDN) || req.url().startsWith(IMGUR)) return route.fulfill({ status: 200, contentType: 'image/png', body: AVATAR_PNG });
         if (req.url().startsWith(YOUTUBE_EMBED)) return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>Video</title>' });
         let state;
         try {
