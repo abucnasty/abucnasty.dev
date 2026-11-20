@@ -12,7 +12,7 @@
  *   factorioVersion: "2.0.72" # optional, quoted text; else the README's `**Factorio Version:**` line
  *   platform: linux-x86_64   # optional; else the `**Platform:**` line
  *   cpu: Ryzen 9800X3D       # optional; else the `**CPU:**` line
- *   authors: [abucnasty]     # optional list of names; never defaulted
+ *   authors: [abucnasty]     # required; a non-empty list of names, kept in order; never defaulted
  *   featured: 1              # optional; position in the home page's Featured list
  *   chart: { ... }           # optional; interactive chart config (see ChartConfig in sync-content.mjs)
  *   ---
@@ -122,7 +122,8 @@ export function discoverBenchmarks(repoPath, topicIds) {
     for (const [key, value] of [['platform', platform], ['cpu', cpu]]) {
       if (value !== undefined && !(typeof value === 'string' && value.trim())) fail(`"${key}" must be non-empty text, not ${JSON.stringify(value)}`);
     }
-    if (authors !== undefined && !(Array.isArray(authors) && authors.length > 0 && authors.every((a) => typeof a === 'string' && a.trim()))) {
+    if (authors === undefined) fail('missing required field "authors"');
+    if (!(Array.isArray(authors) && authors.length > 0 && authors.every((a) => typeof a === 'string' && a.trim()))) {
       fail(`"authors" must be a non-empty list of names (text), not ${JSON.stringify(authors)}`);
     }
     if (featured !== undefined && featured !== true && featured !== false && !(Number.isInteger(featured) && featured > 0)) {

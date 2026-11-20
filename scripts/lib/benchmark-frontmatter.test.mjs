@@ -11,19 +11,22 @@ const roots = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
 
 /** A source repo with one folder per entry: { folder: frontmatter lines (without the --- fences) }. */
-function repo(folders) {
+function repo(folders, { authors = true } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'fm-test-'));
   roots.push(root);
   for (const [folder, lines] of Object.entries(folders)) {
     mkdirSync(path.join(root, 'benchmarks', folder), { recursive: true });
     const slug = folder.replace(/^\d{4}-\d{2}-\d{2}-/, '');
-    const text = `---\npublish: true\nslug: ${slug}\ntitle: T ${slug}\n${lines}\n---\n\n# Body\n`;
+    const authorsLine = authors && !/^authors:/m.test(lines) ? 'authors: [abucnasty]\n' : '';
+    const text = `---\npublish: true\nslug: ${slug}\ntitle: T ${slug}\n${authorsLine}${lines}\n---\n\n# Body\n`;
     writeFileSync(path.join(root, 'benchmarks', folder, 'README.md'), text);
   }
   return root;
 }
 
 const one = (lines) => discoverBenchmarks(repo({ a: lines }), null)[0];
+/** Builds a README that has no `authors` line at all. */
+const oneWithout = (lines) => discoverBenchmarks(repo({ a: lines }, { authors: false }), null)[0];
 const refused = (lines, pattern) => assert.throws(() => one(lines), pattern);
 
 describe('version, platform, cpu', () => {
@@ -35,7 +38,7 @@ describe('version, platform, cpu', () => {
   });
   it('are absent from the entry when the README has none', () => {
     const e = one('');
-    for (const k of ['factorioVersion', 'platform', 'cpu', 'authors']) assert.equal(k in e, false, k);
+    for (const k of ['factorioVersion', 'platform', 'cpu']) assert.equal(k in e, false, k);
   });
   it('refuse a YAML number as version and say to quote it', () => {
     refused('factorioVersion: 2.1', /a\/README\.md: "factorioVersion" must be text like "2\.0\.72".*quote/);
@@ -56,13 +59,14 @@ describe('authors', () => {
     assert.deepEqual(one('authors: [abucnasty, tappi]').authors, ['abucnasty', 'tappi']);
     assert.deepEqual(one('authors: [abucnasty]').authors, ['abucnasty']);
   });
-  it('are optional: no key means no authors on the entry, with no default', () => {
-    assert.equal('authors' in one(''), false);
+  it('are required: no key refuses with missing required field "authors"', () => {
+    assert.throws(() => oneWithout(''), /a\/README\.md: missing required field "authors"/);
   });
   it('refuse an empty list, a non-list and a list with empty or non-text names', () => {
     refused('authors: []', /"authors" must be a non-empty list/);
     refused('authors: abucnasty', /"authors" must be a non-empty list/);
     refused('authors: ["abucnasty", ""]', /"authors" must be a non-empty list/);
+    refused('authors: [""]', /"authors" must be a non-empty list/);
     refused('authors: [1]', /"authors" must be a non-empty list/);
   });
 });
