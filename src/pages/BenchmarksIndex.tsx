@@ -417,9 +417,9 @@ export function BenchmarksIndex() {
                         mt: 0.75,
                       }}
                     >
-                      {b.factorioVersion ? (
-                        <Chip label={b.factorioVersion} size="small" variant="outlined" sx={chipSx} />
-                      ) : null}
+                      {b.factorioVersions?.map((v) => (
+                        <Chip key={v} label={v} size="small" variant="outlined" sx={chipSx} />
+                      ))}
                       {b.timeseries ? <ChartMarker /> : null}
                       {b.saves.length > 0 ? <SaveMarker b={b} /> : null}
                     </Box>
@@ -439,8 +439,8 @@ export function BenchmarksIndex() {
                     </TableCell>
                   ) : null}
                   <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' }, whiteSpace: 'nowrap' }}>
-                    {b.factorioVersion ? (
-                      <Chip label={b.factorioVersion} size="small" variant="outlined" sx={chipSx} />
+                    {b.factorioVersions?.length ? (
+                      <Chip label={b.factorioVersions.join(', ')} size="small" variant="outlined" sx={chipSx} />
                     ) : (
                       <Typography variant="body2" sx={{ color: 'text.disabled' }}>
                         —

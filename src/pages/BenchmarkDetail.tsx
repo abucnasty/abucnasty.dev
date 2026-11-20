@@ -265,9 +265,9 @@ export function BenchmarkDetail() {
                 {benchmark.date}
               </Typography>
             )}
-            {benchmark.factorioVersion && (
-              <Chip size="small" variant="outlined" label={`Factorio ${benchmark.factorioVersion}`} />
-            )}
+            {benchmark.factorioVersions?.map((v) => (
+              <Chip key={v} size="small" variant="outlined" label={`Factorio ${v}`} />
+            ))}
             {benchmark.platform && (
               <Chip size="small" variant="outlined" label={formatPlatform(benchmark.platform)} />
             )}

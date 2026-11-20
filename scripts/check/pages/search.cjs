@@ -9,7 +9,7 @@ const words = (s) => s.toLowerCase().split(/\s+/).filter(Boolean);
 
 // Same haystack as staticEntries() in src/search.ts.
 function benchmarkHaystack(b, topicLabels) {
-  return [b.title, b.question, b.finding, b.summary, b.topic ? topicLabels.get(b.topic) : '', b.factorioVersion, b.platform, b.cpu]
+  return [b.title, b.question, b.finding, b.summary, b.topic ? topicLabels.get(b.topic) : '', ...(b.factorioVersions ?? []), b.platform, b.cpu]
     .filter(Boolean)
     .join('\n')
     .toLowerCase();
@@ -225,7 +225,7 @@ module.exports = {
     }
 
     // More than six benchmarks.
-    const terms = [...index.topics.map((t) => t.label), ...new Set(index.benchmarks.map((b) => b.factorioVersion).filter(Boolean))];
+    const terms = [...index.topics.map((t) => t.label), ...new Set(index.benchmarks.flatMap((b) => b.factorioVersions ?? []))];
     let many = null;
     for (const t of terms) {
       const n = index.benchmarks.filter((b) => words(t).every((w) => benchmarkHaystack(b, topicLabels).includes(w))).length;

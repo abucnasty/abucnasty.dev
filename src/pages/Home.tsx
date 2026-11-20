@@ -41,7 +41,7 @@ function benchmarkItem(b: BenchmarkSummary): FeedItem {
     date: b.date ?? '',
     title: b.title,
     subtitle: b.finding ?? b.question ?? b.summary,
-    tag: topicLabel ?? b.factorioVersion,
+    tag: topicLabel ?? b.factorioVersions?.join(', '),
   };
 }
 

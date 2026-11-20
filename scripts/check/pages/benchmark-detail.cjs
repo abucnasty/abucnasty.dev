@@ -112,8 +112,8 @@ module.exports = {
         // Header chips.
         const chips = page.locator('main header ~ div .MuiChip-root');
         const chipTexts = (await chips.allTextContents()).map((t) => t.trim());
-        if (b.factorioVersion) {
-          expect(`${label}: chip "Factorio ${b.factorioVersion}"`, chipTexts.includes(`Factorio ${b.factorioVersion}`), chipTexts.join(' | '));
+        for (const v of b.factorioVersions ?? []) {
+          expect(`${label}: chip "Factorio ${v}"`, chipTexts.includes(`Factorio ${v}`), chipTexts.join(' | '));
         }
         if (hasSaves) {
           const chip = page.locator(`main a.MuiChip-root[href="/saves/${b.source}"]`);
@@ -356,6 +356,29 @@ module.exports = {
         await p0.waitForSelector('main h1', { timeout: 10000 });
         const chips0 = await chipsOf(p0);
         expect(`authors (${viewport}): no authors in the index, no chip`, !chips0.some((c) => c.startsWith('By ')), chips0.join(' | '));
+      }
+    }
+
+    // One chip per version: two versions of different minors, one version, as the index holds them.
+    if (list.length >= 2) {
+      const [many, single] = list;
+      const versionsBySlug = { [many.slug]: ['2.0.55', '2.1.9'], [single.slug]: ['2.1.24'] };
+      const versionChips = async (page) =>
+        (await page.locator('main header ~ div .MuiChip-root').allTextContents()).map((t) => t.trim()).filter((t) => t.startsWith('Factorio '));
+      for (const viewport of ['desktop', 'phone']) {
+        const p2 = await open(`/benchmarks/${many.slug}`, viewport, { benchmarkVersions: versionsBySlug });
+        await p2.waitForSelector('main h1', { timeout: 10000 });
+        const got2 = await versionChips(p2);
+        expect(`versions (${viewport}): two versions show as two chips, in order`, JSON.stringify(got2) === JSON.stringify(['Factorio 2.0.55', 'Factorio 2.1.9']), got2.join(' | '));
+        const row = await p2.locator('main header ~ div').first().boundingBox();
+        const boxes = await p2.locator('main header ~ div .MuiChip-root', { hasText: /^Factorio / }).evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ x: r.x, w: r.width, right: r.right })));
+        expect(`versions (${viewport}): the chips are inside the conditions row`, row && boxes.length === 2 && boxes.every((r) => r.x >= row.x - 1 && r.right <= row.x + row.width + 1), JSON.stringify({ row, boxes }));
+        await shot(p2, `benchmark-versions-${viewport}`);
+
+        const p1 = await open(`/benchmarks/${single.slug}`, viewport, { benchmarkVersions: versionsBySlug });
+        await p1.waitForSelector('main h1', { timeout: 10000 });
+        const got1 = await versionChips(p1);
+        expect(`versions (${viewport}): one version shows as one chip`, JSON.stringify(got1) === JSON.stringify(['Factorio 2.1.24']), got1.join(' | '));
       }
     }
 

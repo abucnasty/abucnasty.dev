@@ -9,7 +9,8 @@
  *   topic: mining            # optional; an id from `topics` in content/manifest.json
  *   published_date: 2025-11-11  # optional, YYYY-MM-DD, the day it was published; wins over `date`
  *   date: 2025-11-11         # optional, YYYY-MM-DD; read only when there is no published_date
- *   factorioVersion: "2.0.72" # optional, quoted text; else the README's `**Factorio Version:**` line
+ *   factorioVersion: "2.0.72" # optional, quoted text, or a list of quoted text (["2.0.55", "2.1.9"]) for a
+ *                            # benchmark that compares versions; else the README's `**Factorio Version:**` line
  *   platform: linux-x86_64   # optional; else the `**Platform:**` line
  *   cpu: Ryzen 9800X3D       # optional; else the `**CPU:**` line
  *   authors: [abucnasty]     # required; a non-empty list of names, kept in order; never defaulted
@@ -32,6 +33,22 @@ const KEYS = new Set([
   'publish', 'slug', 'title', 'topic', 'published_date', 'date', 'featured', 'summary', 'tags', 'chart',
   'factorioVersion', 'platform', 'cpu', 'authors',
 ]);
+
+const VERSION = /^\d+(\.\d+)+$/;
+
+/**
+ * The versions a `factorioVersion` value names, in the order written, a repeat dropped: a text is a
+ * one-item list, a list is its non-blank texts. `undefined` when there is none. Lenient; the strict
+ * check of a published README is in `discoverBenchmarks`.
+ *
+ * @param {unknown} value
+ * @returns {string[] | undefined}
+ */
+export function versionList(value) {
+  const items = Array.isArray(value) ? value : [value];
+  const list = [...new Set(items.filter((v) => typeof v === 'string' && v.trim()).map((v) => v.trim()))];
+  return list.length > 0 ? list : undefined;
+}
 
 /** `YYYY-MM-DD` that is a day on the calendar (2026-02-30 and 2026-13-40 are not). */
 export function isRealDay(value) {
@@ -116,8 +133,9 @@ export function discoverBenchmarks(repoPath, topicIds) {
     for (const [key, value] of [['published_date', published_date], ['date', date]]) {
       if (value !== undefined && !isRealDay(value)) fail(`"${key}" must be a real day as YYYY-MM-DD, not ${JSON.stringify(value)}`);
     }
-    if (factorioVersion !== undefined && !(typeof factorioVersion === 'string' && /^\d+(\.\d+)+$/.test(factorioVersion))) {
-      fail(`"factorioVersion" must be text like "2.0.72" (quote it, or YAML reads 2.1 as a number), not ${JSON.stringify(factorioVersion)}`);
+    const versionItems = Array.isArray(factorioVersion) ? factorioVersion : [factorioVersion];
+    if (factorioVersion !== undefined && !(versionItems.length > 0 && versionItems.every((v) => typeof v === 'string' && VERSION.test(v)))) {
+      fail(`"factorioVersion" must be text like "2.0.72", or a non-empty list of such text (quote each, or YAML reads 2.1 as a number), not ${JSON.stringify(factorioVersion)}`);
     }
     for (const [key, value] of [['platform', platform], ['cpu', cpu]]) {
       if (value !== undefined && !(typeof value === 'string' && value.trim())) fail(`"${key}" must be non-empty text, not ${JSON.stringify(value)}`);
@@ -143,7 +161,7 @@ export function discoverBenchmarks(repoPath, topicIds) {
         slug, source, title, topic,
         date: resolveDate({ published_date, date }),
         featured: isFeatured || undefined, summary, tags, chart,
-        factorioVersion, platform: platform?.trim(), cpu: cpu?.trim(), authors,
+        factorioVersions: versionList(factorioVersion), platform: platform?.trim(), cpu: cpu?.trim(), authors,
       },
     });
   }

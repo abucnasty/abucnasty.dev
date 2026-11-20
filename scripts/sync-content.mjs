@@ -72,7 +72,7 @@ const SOURCE_REPO_PATH =
 /** @typedef {{ sourceRepo: { owner: string, repo: string, branch: string }, lfsWorkerUrl?: string, topics?: Topic[] }} Manifest */
 
 /** Benchmark fields copied into src/generated/summary.json (see BenchmarkSummary in src/content.ts). */
-const SUMMARY_FIELDS = ['slug', 'title', 'date', 'authors', 'summary', 'tags', 'featured', 'factorioVersion', 'platform', 'cpu', 'topic', 'question', 'finding'];
+const SUMMARY_FIELDS = ['slug', 'title', 'date', 'authors', 'summary', 'tags', 'featured', 'factorioVersions', 'platform', 'cpu', 'topic', 'question', 'finding'];
 
 /** Shortest text worth showing as a one-line finding. */
 const MIN_FINDING_LENGTH = 12;
@@ -168,7 +168,7 @@ async function syncBenchmark(entry, githubBase, branch, rawBase, treeBase, lfsWo
   const saves = [];
   /** @type {(renames?: Map<string, string>) => Record<string, string>} published markdown file name → its text */
   let renderMarkdown = () => ({});
-  let factorioVersion;
+  let factorioVersions;
   let platform;
   let cpu;
   let question;
@@ -218,7 +218,7 @@ async function syncBenchmark(entry, githubBase, branch, rawBase, treeBase, lfsWo
     if (rel.toLowerCase() === 'readme.md') {
       const text = await fs.readFile(absFile, 'utf8');
       const { body: raw } = splitFrontmatter(text, `${entry.source}/${rel}`);
-      ({ factorioVersion, platform, cpu } = readmeMeta(text));
+      ({ factorioVersions, platform, cpu } = readmeMeta(text));
       const rawGithubDir = `${rawBase}/${entry.source}`;
       // Order matters: strip the README's own contents list, lift the question and answer
       // sections, and only then rewrite assets and links, so all three files are rewritten alike.
@@ -260,7 +260,7 @@ async function syncBenchmark(entry, githubBase, branch, rawBase, treeBase, lfsWo
 
   return {
     ...entry,
-    factorioVersion,
+    factorioVersions,
     platform,
     cpu,
     question,

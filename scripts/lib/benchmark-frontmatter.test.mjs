@@ -32,13 +32,13 @@ const refused = (lines, pattern) => assert.throws(() => one(lines), pattern);
 describe('version, platform, cpu', () => {
   it('are accepted and returned on the entry', () => {
     const e = one('factorioVersion: "2.0.72"\nplatform: windows-x86_64\ncpu: Ryzen 9800X3D');
-    assert.equal(e.factorioVersion, '2.0.72');
+    assert.deepEqual(e.factorioVersions, ['2.0.72']);
     assert.equal(e.platform, 'windows-x86_64');
     assert.equal(e.cpu, 'Ryzen 9800X3D');
   });
   it('are absent from the entry when the README has none', () => {
     const e = one('');
-    for (const k of ['factorioVersion', 'platform', 'cpu']) assert.equal(k in e, false, k);
+    for (const k of ['factorioVersions', 'factorioVersion', 'platform', 'cpu']) assert.equal(k in e, false, k);
   });
   it('refuse a YAML number as version and say to quote it', () => {
     refused('factorioVersion: 2.1', /a\/README\.md: "factorioVersion" must be text like "2\.0\.72".*quote/);
@@ -46,6 +46,25 @@ describe('version, platform, cpu', () => {
   it('refuse an empty or malformed version', () => {
     refused('factorioVersion: ""', /"factorioVersion"/);
     refused('factorioVersion: "two"', /"factorioVersion"/);
+  });
+  it('take a list of versions as written, a one-item list and a plain string', () => {
+    assert.deepEqual(one('factorioVersion: ["2.0.55", "2.1.9"]').factorioVersions, ['2.0.55', '2.1.9']);
+    assert.deepEqual(one('factorioVersion: ["2.1.24"]').factorioVersions, ['2.1.24']);
+    assert.deepEqual(one('factorioVersion: "2.0.72"').factorioVersions, ['2.0.72']);
+  });
+  it('drop a repeated version of a list and keep the first', () => {
+    assert.deepEqual(one('factorioVersion: ["2.1.9", "2.0.55", "2.1.9"]').factorioVersions, ['2.1.9', '2.0.55']);
+  });
+  it('refuse an empty list, a malformed item and a non-text item, naming the list form', () => {
+    const message = /"factorioVersion" must be text like "2\.0\.72", or a non-empty list of such text \(quote each/;
+    refused('factorioVersion: []', message);
+    refused('factorioVersion: [""]', message);
+    refused('factorioVersion: ["two"]', message);
+    refused('factorioVersion: ["2.0.55", 2.1]', message);
+    refused('factorioVersion: [["2.0.55"]]', message);
+    refused('factorioVersion: [{a: "2.0.55"}]', message);
+    refused('factorioVersion: 2.1', message);
+    refused('factorioVersion: ""', message);
   });
   it('refuse an empty platform or cpu', () => {
     refused('platform: ""', /"platform" must be non-empty text/);
