@@ -37,7 +37,7 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
-import { aggregateScenarioCsv } from './lib/aggregate.mjs';
+import { aggregateScenarioCsv, requireResultFile } from './lib/aggregate.mjs';
 import { readmeMeta } from './lib/readme-meta.mjs';
 import { discoverBenchmarks, splitFrontmatter } from './lib/benchmark-frontmatter.mjs';
 import { stripOwnToc } from './lib/strip-toc.mjs';
@@ -376,8 +376,11 @@ async function aggregateBenchmarkChart(entry, srcDir, outMdDir) {
     const scenarios = [];
     const metricUnion = new Set();
     for (const sc of scenarioList) {
-      const csvPath = path.join(srcDir, sc.csv);
-      await assertFile(csvPath, `chart csv missing: ${entry.slug} → ${sc.csv}`);
+      // `sc.csv` may name x.csv, x.csv.zst or x.csv.gz; a missing file falls back to its sibling.
+      const csvPath = await requireResultFile(
+        path.join(srcDir, sc.csv),
+        `chart csv missing: ${entry.slug} → ${sc.csv}`,
+      );
       const agg = await aggregateScenarioCsv(csvPath, {
         metrics: metricsOverride ?? cfg.metrics,
         removeFirstTicks,
@@ -755,16 +758,6 @@ async function assertDir(p, msg) {
   try {
     const s = await fs.stat(p);
     if (!s.isDirectory()) throw new Error('not a directory');
-  } catch {
-    throw new Error(`${msg} (looked at ${p})`);
-  }
-}
-
-/** @param {string} p @param {string} msg */
-async function assertFile(p, msg) {
-  try {
-    const s = await fs.stat(p);
-    if (!s.isFile()) throw new Error('not a file');
   } catch {
     throw new Error(`${msg} (looked at ${p})`);
   }
