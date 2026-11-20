@@ -334,7 +334,7 @@ module.exports = {
     // Authors chip: "By a, b" beside version, platform and cpu; nothing when the index has no authors.
     if (list.length >= 3) {
       const [two, one, none] = list;
-      const authorsBySlug = { [two.slug]: ['abucnasty', 'tappi'], [one.slug]: ['abucnasty'] };
+      const authorsBySlug = { [two.slug]: ['abucnasty', 'tappi'], [one.slug]: ['abucnasty'], [none.slug]: null };
       const chipsOf = async (page) => (await page.locator('main header ~ div .MuiChip-root').allTextContents()).map((t) => t.trim());
       for (const viewport of ['desktop', 'phone']) {
         const p2 = await open(`/benchmarks/${two.slug}`, viewport, { benchmarkAuthors: authorsBySlug });
