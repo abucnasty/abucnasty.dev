@@ -91,14 +91,17 @@ module.exports = {
     // ---- Filters. Expected rows are computed here, independently of src/benchmarkFilters.ts.
     const topics = data.index.topics;
     const labelOf = (id) => (topics.find((t) => t.id === id) || {}).label || '';
-    const versions = [...new Set(list.filter((b) => b.factorioVersion).map((b) => b.factorioVersion.split('.').slice(0, 2).join('.')))]
+    // Every version of every benchmark; `listOf` swaps in versions for the fixture run below.
+    const listOf = (overrides = {}) => list.map((b) => (b.slug in overrides ? { ...b, factorioVersions: overrides[b.slug] } : b));
+    const versionsOf = (l) => [...new Set(l.flatMap((b) => (b.factorioVersions ?? []).map((v) => v.split('.').slice(0, 2).join('.'))))]
       .sort((a, b) => { const [a1, a2] = a.split('.').map(Number); const [b1, b2] = b.split('.').map(Number); return b1 - a1 || b2 - a2; });
-    const expectedFor = (f) => sorted.filter((b) => {
+    const versions = versionsOf(list);
+    const expectedFor = (f, src = sorted) => src.filter((b) => {
       if (f.topic && b.topic !== f.topic) return false;
-      if (f.v && !(b.factorioVersion && (b.factorioVersion === f.v || b.factorioVersion.startsWith(f.v + '.')))) return false;
+      if (f.v && !(b.factorioVersions ?? []).some((v) => v === f.v || v.startsWith(f.v + '.'))) return false;
       if (f.charts && !b.timeseries) return false;
       if (f.saves && b.saves.length === 0) return false;
-      const hay = [b.title, b.question, b.finding, b.summary, b.topic ? labelOf(b.topic) : '', b.factorioVersion, b.platform, b.cpu].filter(Boolean).join('\n').toLowerCase();
+      const hay = [b.title, b.question, b.finding, b.summary, b.topic ? labelOf(b.topic) : '', ...(b.factorioVersions ?? []), ...(b.platforms ?? []), b.cpu].filter(Boolean).join('\n').toLowerCase();
       return (f.q || '').toLowerCase().split(/\s+/).filter(Boolean).every((t) => hay.includes(t));
     });
     const shownSlugs = (pg) => pg.$$eval('main tbody tr a[href^="/benchmarks/"]', (as) => as.map((a) => a.getAttribute('href').replace('/benchmarks/', '')));
@@ -220,5 +223,53 @@ module.exports = {
     await shot(fp, 'benchmarks-empty-phone');
     const emptyBtn = await fp.getByRole('button', { name: 'Clear filters' }).last().boundingBox();
     expect('phone: the empty state button is at least 44 px tall', Boolean(emptyBtn) && emptyBtn.height >= 44, emptyBtn && String(emptyBtn.height));
+
+    // ---- Versions: a benchmark that compares two versions, one with a single version (the index served by
+    // fixtures/benchmark-versions.cjs). Expectations are computed here from the same overrides.
+    if (sorted.length >= 2) {
+      const [many, single] = sorted;
+      const overrides = { [many.slug]: ['2.0.55', '2.1.9'], [single.slug]: ['2.1.24'] };
+      const vList = listOf(overrides);
+      const vSorted = [...vList].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+      const rowOf = (pg, slug) => pg.locator('main tbody tr', { has: pg.locator(`a[href="/benchmarks/${slug}"]`) });
+      // The visible chips of a row that read as a version or a joined list of versions.
+      const versionChips = (pg, slug) => rowOf(pg, slug).evaluate((tr) => [...tr.querySelectorAll('.MuiChip-root')]
+        .filter((el) => el.getClientRects().length > 0 && /^\d+(\.\d+)+(, \d+(\.\d+)+)*$/.test(el.textContent.trim()))
+        .map((el) => el.textContent.trim()));
+
+      const vd = await open('/benchmarks', 'desktop', { benchmarkVersions: overrides });
+      await vd.waitForSelector('main tbody tr');
+      const cell = await versionChips(vd, many.slug);
+      expect('versions (desktop): two versions are one chip in the table cell, joined', JSON.stringify(cell) === JSON.stringify(['2.0.55, 2.1.9']), cell.join(' | '));
+      const one = await versionChips(vd, single.slug);
+      expect('versions (desktop): one version is one chip', JSON.stringify(one) === JSON.stringify(['2.1.24']), one.join(' | '));
+      const vRows = await readRows(vd);
+      const vTallest = Math.max(...vRows.map((r) => r.height));
+      expect('versions (desktop): body row height is still at most 36 px', vRows.length > 0 && vTallest <= 36, `tallest ${vTallest} px`);
+      const overflow = await vd.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect('versions (desktop): the version column does not push the page sideways', overflow <= 0, `overflow ${overflow}px`);
+      await shot(vd, 'benchmarks-versions-desktop');
+
+      for (const v of ['2.0', '2.1']) {
+        await goto(vd, `/benchmarks?v=${v}`);
+        const got = await shownSlugs(vd);
+        const want = expectedFor({ v }, vSorted).map((b) => b.slug);
+        expect(`versions: ?v=${v} keeps a benchmark that lists the minor (${want.length} rows)`, got.length === want.length && got.every((x, i) => x === want[i]) && got.includes(many.slug), `${got.length} rows, expected ${want.length}`);
+      }
+      await goto(vd, '/benchmarks?q=2.1.9');
+      const gotQ = await shownSlugs(vd);
+      const wantQ = expectedFor({ q: '2.1.9' }, vSorted).map((b) => b.slug);
+      expect('versions: the text 2.1.9 finds the two-version benchmark', gotQ.length === wantQ.length && gotQ.every((x, i) => x === wantQ[i]) && gotQ.includes(many.slug), `${gotQ.length} rows, expected ${wantQ.length}`);
+
+      const vp = await open('/benchmarks', 'phone', { benchmarkVersions: overrides });
+      await vp.waitForSelector('main tbody tr');
+      const phoneMany = await versionChips(vp, many.slug);
+      expect('versions (phone): two versions are two chips in the row, in order', JSON.stringify(phoneMany) === JSON.stringify(['2.0.55', '2.1.9']), phoneMany.join(' | '));
+      const phoneOne = await versionChips(vp, single.slug);
+      expect('versions (phone): one version is one chip', JSON.stringify(phoneOne) === JSON.stringify(['2.1.24']), phoneOne.join(' | '));
+      const phoneOver = await vp.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect('versions (phone): no sideways scroll', phoneOver <= 0, `overflow ${phoneOver}px`);
+      await shot(vp, 'benchmarks-versions-phone');
+    }
   },
 };

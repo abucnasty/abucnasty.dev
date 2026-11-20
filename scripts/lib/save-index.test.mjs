@@ -39,6 +39,20 @@ describe('save index metadata', () => {
     assert.equal(m.factorio_version, '2.0.72');
     assert.equal(m.benchmark_machine_platform, 'windows-x86_64');
   });
+  it('joins the versions of a list with a comma', () => {
+    const readme = '---\nfactorioVersion: ["2.0.55", "2.1.9"]\n---\n\n**Factorio Version:** 2.0.10\n';
+    assert.equal(build({ '2026-01-01-a': readme })['benchmarks/2026-01-01-a'].factorio_version, '2.0.55, 2.1.9');
+  });
+  it('joins the platforms of a list, or of a comma string, with a comma', () => {
+    const list = '---\nplatform: [windows-x86_64, linux-x86_64]\n---\n';
+    assert.equal(build({ '2026-01-01-a': list })['benchmarks/2026-01-01-a'].benchmark_machine_platform, 'windows-x86_64, linux-x86_64');
+    const header = '# A\n\n**Platform:** windows-x86_64, linux-x86_64\n';
+    assert.equal(build({ '2026-01-01-a': header })['benchmarks/2026-01-01-a'].benchmark_machine_platform, 'windows-x86_64, linux-x86_64');
+  });
+  it('keeps one version as a plain string', () => {
+    const readme = '---\nfactorioVersion: ["2.1.24"]\n---\n';
+    assert.equal(build({ '2026-01-01-a': readme })['benchmarks/2026-01-01-a'].factorio_version, '2.1.24');
+  });
   it('falls back to the header lines of an old README', () => {
     const readme = '# A\n\n**Factorio Version:** 2.0.10\n**Platform:** linux-x86_64\n';
     const m = build({ '2026-01-01-a': readme })['benchmarks/2026-01-01-a'];

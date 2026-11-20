@@ -82,7 +82,7 @@ export function buildSaveIndex({ repoPath, lfsWorkerUrl, benchmarks, log = () =>
   for (const folder of folders) {
     const entry = bySource.get(folder);
     const readme = blobs.get(readmeOidByFolder.get(folder));
-    const { factorioVersion, platform, publishedDate } = readme ? readmeMeta(readme.toString('utf8')) : {};
+    const { factorioVersions, platforms, publishedDate } = readme ? readmeMeta(readme.toString('utf8')) : {};
     const datePrefix = folder.split('/')[1].match(/^(\d{4}-\d{2}-\d{2})-/);
     /** @type {SaveFolderMeta} */
     const m = {
@@ -90,8 +90,8 @@ export function buildSaveIndex({ repoPath, lfsWorkerUrl, benchmarks, log = () =>
       benchmark_slug: entry?.slug,
       // entry.date is already the resolved date (published_date, else date); an unpublished folder's README can still carry published_date.
       benchmark_date: entry?.date ?? publishedDate ?? datePrefix?.[1],
-      factorio_version: factorioVersion,
-      benchmark_machine_platform: platform,
+      factorio_version: factorioVersions?.join(', '),
+      benchmark_machine_platform: platforms?.join(', '),
     };
     // JSON.stringify drops the undefined fields; skip folders with nothing to say.
     if (Object.values(m).some((v) => v !== undefined)) meta[folder] = m;

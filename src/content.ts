@@ -26,10 +26,10 @@ export interface BenchmarkEntry {
   summary?: string;
   tags?: string[];
   featured?: boolean;
-  /** From the README's frontmatter `factorioVersion`, else its `**Factorio Version:**` header line. */
-  factorioVersion?: string;
-  /** From the frontmatter `platform`, else the `**Platform:**` header line. */
-  platform?: string;
+  /** From the README's frontmatter `factorioVersion` (a text or a list), else its `**Factorio Version:**` header line; one item per version. */
+  factorioVersions?: string[];
+  /** From the frontmatter `platform` (a text or a list), else the `**Platform:**` header line; one item per platform, e.g. "linux-x86_64". */
+  platforms?: string[];
   /** From the frontmatter `cpu`, else the `**CPU:**` header line, e.g. "Ryzen 9800X3D". */
   cpu?: string;
   /** Id of an entry in `ContentIndex.topics`; set in the benchmark README's frontmatter. */
@@ -65,7 +65,7 @@ export interface ContentIndex {
 /** The fields of a benchmark the home page and site search use. */
 export type BenchmarkSummary = Pick<
   BenchmarkEntry,
-  'slug' | 'title' | 'date' | 'authors' | 'summary' | 'tags' | 'featured' | 'factorioVersion' | 'platform' | 'cpu' | 'topic' | 'question' | 'finding'
+  'slug' | 'title' | 'date' | 'authors' | 'summary' | 'tags' | 'featured' | 'factorioVersions' | 'platforms' | 'cpu' | 'topic' | 'question' | 'finding'
 >;
 
 /**
@@ -92,9 +92,9 @@ export interface SaveFolderMeta {
   benchmark_slug?: string;
   /** `YYYY-MM-DD`: from the benchmark's frontmatter, else the folder-name prefix. */
   benchmark_date?: string;
-  /** From the folder's README. */
+  /** From the folder's README; several versions are joined with ", ". */
   factorio_version?: string;
-  /** From the folder's README, e.g. "linux-x86_64". */
+  /** From the folder's README, e.g. "linux-x86_64"; several platforms are joined with ", ". */
   benchmark_machine_platform?: string;
 }
 

@@ -11,7 +11,8 @@ function formatBytes(bytes) {
   return `${Math.max(1, Math.round(bytes / 1e3))} kB`;
 }
 const saveCount = (n) => `${n} ${n === 1 ? 'save' : 'saves'}`;
-const platform = (raw) => {
+const platform = (raw) => raw.split(',').map((p) => p.trim()).filter(Boolean).map(platformOne).join(', ');
+const platformOne = (raw) => {
   const l = raw.toLowerCase();
   if (l.includes('windows') || l.startsWith('win')) return 'Windows';
   if (l.includes('linux')) return 'Linux';

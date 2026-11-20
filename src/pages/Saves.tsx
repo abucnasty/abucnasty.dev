@@ -20,7 +20,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import { Link as RouterLink, useNavigationType, useParams, useSearchParams } from 'react-router-dom';
 import index from '../generated/index.json';
 import type { ContentIndex, SaveFolderMeta } from '../content';
-import { formatBytes, formatPlatform, formatSaveCount } from '../format';
+import { formatBytes, formatPlatforms, formatSaveCount } from '../format';
 import {
   collapseChain,
   findFolder,
@@ -374,7 +374,7 @@ function FolderHeader({ tree, folder }: { tree: SaveTree; folder: SaveFolder }) 
             <Chip label={`Factorio ${meta.factorio_version}`} size="small" variant="outlined" />
           )}
           {meta.benchmark_machine_platform && (
-            <Chip label={formatPlatform(meta.benchmark_machine_platform)} size="small" variant="outlined" />
+            <Chip label={formatPlatforms(meta.benchmark_machine_platform)} size="small" variant="outlined" />
           )}
           <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: 13 }}>
             {formatSaveCount(top.count)} · {formatBytes(top.bytes)}

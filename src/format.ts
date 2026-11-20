@@ -9,6 +9,16 @@ export function formatPlatform(raw: string): string {
   return raw;
 }
 
+/** "windows-x86_64, linux-x86_64" → ["windows-x86_64", "linux-x86_64"]: the platforms of a comma-joined text. */
+export function splitPlatforms(raw: string): string[] {
+  return raw.split(',').map((p) => p.trim()).filter(Boolean);
+}
+
+/** A comma-joined platform text, each platform formatted on its own: "Windows, Linux". */
+export function formatPlatforms(raw: string): string {
+  return splitPlatforms(raw).map(formatPlatform).join(', ');
+}
+
 /** Decimal units, the way browsers and file managers report download sizes. */
 export function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`;
