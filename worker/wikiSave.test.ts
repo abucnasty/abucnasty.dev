@@ -1,11 +1,14 @@
 // Saving wiki pages (wikiSave.ts, github.ts, rateLimit.ts) through the API (wikiApi.ts), with
-// GitHub, Discord and the LFS bucket stood in for: the critical flows only.
+// GitHub, buc-bot (the role check and announcements) and the LFS bucket stood in for: the
+// critical flows only.
 import assert from 'node:assert/strict';
 import { createVerify, generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import { pemToPkcs8 } from './github.ts';
 import { takeSlot, SAVE_LIMIT } from './rateLimit.ts';
 import { signSession, SESSION_COOKIE } from './session.ts';
+import { fakeBucBot } from './fakeBucBot.ts';
+import type { FakeBucBotOptions } from './fakeBucBot.ts';
 import { createWikiApi, type WikiEnv } from './wikiApi.ts';
 import { COMMIT_EMAIL, gitBlobSha, lfsKey, lfsPointer } from './wikiSave.ts';
 import { existingFolder, folderProblem, isDraft, pageFolderProblem, splitPage, tidyFolder, withDraft } from '../src/wikiSource.ts';
@@ -13,8 +16,6 @@ import { existingFolder, folderProblem, isDraft, pageFolderProblem, splitPage, t
 const SITE = 'https://abucnasty.dev';
 const SECRET = 's'.repeat(48);
 const GUILD = '1381752136450441266';
-const ROLE = '1572672305019101214';
-const CHANNEL = '1571207361769644142';
 const USER = '80351110224678912';
 const T0 = Date.UTC(2026, 10, 18, 12);
 const REPO = 'https://api.github.com/repos/abucnasty/factorio-vault';
@@ -32,13 +33,14 @@ const sha = (text: string) => gitBlobSha(enc.encode(text));
 const b64 = (text: string) => Buffer.from(text).toString('base64');
 
 interface Options {
-  roles?: () => string[];
+  /** Whether the user holds the Wiki Editor role (buc-bot's answer); default yes. */
+  editor?: () => boolean;
   readOnly?: boolean;
   /** Answers of PATCH refs/heads/main in turn (true: moved; false: not a fast-forward). */
   refAnswers?: boolean[];
   /** What main's page is after the first ref refusal. */
   pageAfterMove?: string;
-  announce?: () => Response;
+  announce?: FakeBucBotOptions['announce'];
   key?: string;
 }
 
@@ -65,10 +67,6 @@ async function setup(o: Options = {}) {
     if (typeof init.body === 'string') body = init.body.startsWith('{') ? JSON.parse(init.body) : init.body;
     calls.push({ method, url, body });
     const head = heads[heads.length - 1];
-    if (url === `https://discord.com/api/v10/guilds/${GUILD}/members/${USER}`) {
-      return json({ roles: (o.roles ?? (() => [ROLE]))(), nick: 'Buc the Editor', avatar: null, user: { id: USER, username: 'buc', global_name: 'Buc', avatar: null } });
-    }
-    if (url === `https://discord.com/api/v10/channels/${CHANNEL}/messages`) return (o.announce ?? (() => json({ id: '1' })))();
     if (url === 'https://api.github.com/app/installations/2/access_tokens') {
       assert.equal(method, 'POST');
       return json({ token: 'installation-token', expires_at: new Date(T0 + 3600_000).toISOString() }, 201);
@@ -106,10 +104,8 @@ async function setup(o: Options = {}) {
     SITE_URL: SITE,
     DISCORD_CLIENT_ID: '1572695514938613760',
     DISCORD_GUILD_ID: GUILD,
-    WIKI_EDITOR_ROLE_ID: ROLE,
-    WIKI_ANNOUNCE_CHANNEL_ID: CHANNEL,
     DISCORD_CLIENT_SECRET: 'client-secret-value',
-    DISCORD_BOT_TOKEN: 'bot-token-value',
+    BUC_BOT: fakeBucBot({ editor: o.editor, announce: o.announce }, calls, () => T0),
     WIKI_SESSION_SECRET: SECRET,
     WIKI_READ_ONLY: o.readOnly ? 'true' : undefined,
     GITHUB_APP_ID: '1',
@@ -164,9 +160,9 @@ test('save: re-checks the role, then blob, tree, commit and ref in order, as the
   const res = await t.save(await edit());
   const out = await j(res);
   assert.equal(res.status, 200, JSON.stringify(out));
-  const steps = t.calls.map((c) => `${c.method} ${c.url.replace(REPO, '').replace('https://discord.com/api/v10', 'discord').replace('https://api.github.com', '')}`);
+  const steps = t.calls.map((c) => `${c.method} ${c.url.replace(REPO, '').replace('https://api.github.com', '')}`);
   assert.deepEqual(steps, [
-    `GET discord/guilds/${GUILD}/members/${USER}`,
+    'RPC buc-bot/wikiMember',
     'POST /app/installations/2/access_tokens',
     'GET /git/ref/heads/main',
     'GET /git/commits/head1',
@@ -176,8 +172,9 @@ test('save: re-checks the role, then blob, tree, commit and ref in order, as the
     'POST /git/trees',
     'POST /git/commits',
     'PATCH /git/refs/heads/main',
-    `POST discord/channels/${CHANNEL}/messages`,
+    'RPC buc-bot/announceWikiEdit',
   ]);
+  assert.equal(t.calls[0].body, USER);
   const by = (p: string) => t.calls.find((c) => c.url === `${REPO}${p}` && c.method !== 'GET')!.body;
   const text = '---\naliases: [Benchmarking]\n---\n\n# How to benchmark\n\nNew text.\n';
   assert.equal(Buffer.from(by('/git/blobs').content, 'base64').toString(), text, 'frontmatter put back unchanged');
@@ -187,11 +184,13 @@ test('save: re-checks the role, then blob, tree, commit and ref in order, as the
   assert.equal(commit.message, `Explain the new flag\n\nWiki edit by Buc the Editor (Discord ${USER}) via abucnasty.dev`);
   assert.deepEqual(commit.author, { name: 'Buc the Editor', email: COMMIT_EMAIL, date: new Date(T0).toISOString() });
   assert.deepEqual(by('/git/refs/heads/main'), { sha: out.commit, force: false });
-  const announce = t.calls.at(-1)!.body;
-  assert.deepEqual(announce.allowed_mentions, { parse: [] });
-  assert.equal(announce.embeds[0].url, 'https://abucnasty.dev/wiki/how-to-benchmark');
-  assert.equal(announce.embeds[0].description, 'Explain the new flag');
-  assert.equal(announce.embeds[0].author.name, 'Buc the Editor');
+  assert.deepEqual(t.calls.at(-1)!.body, {
+    title: 'How to Benchmark',
+    url: 'https://abucnasty.dev/wiki/how-to-benchmark',
+    summary: 'Explain the new flag',
+    editor: 'Buc the Editor',
+    created: false,
+  });
   assert.equal(out.blob, await sha(text));
   assert.equal(out.slug, 'how-to-benchmark');
 
@@ -237,11 +236,11 @@ test('save: when only main moved, the commit is made again on the new head; when
   assert.equal(v.calls.filter((c) => c.url.endsWith('/git/refs/heads/main')).length, 3, 'bounded retries');
 });
 
-test('save: a lost role is a 403 with no commit, even right after the role was cached', async () => {
-  let roles = [ROLE];
-  const t = await setup({ roles: () => roles });
+test('save: a lost role is a 403 with no commit, checked on the save itself', async () => {
+  let editor = true;
+  const t = await setup({ editor: () => editor });
   assert.equal((await j(await t.get('/api/wiki/me'))).editor, true);
-  roles = [];
+  editor = false;
   const res = await t.save(await edit());
   assert.equal(res.status, 403);
   assert.equal((await j(res)).error, 'not_editor');
@@ -361,7 +360,7 @@ test('save: a new image goes to the LFS bucket under its sha256 and its pointer 
 });
 
 test('save: a failed announcement never fails the save; drafts are not announced', async () => {
-  const t = await setup({ announce: () => new Response('nope', { status: 500 }) });
+  const t = await setup({ announce: () => ({ ok: false, reason: 'messages: HTTP 500' }) });
   const res = await t.save(await edit());
   assert.equal(res.status, 200);
   assert.ok(t.logs.some((l) => /wiki announce: messages: HTTP 500/.test(l)));
@@ -371,7 +370,7 @@ test('save: a failed announcement never fails the save; drafts are not announced
   const d = await setup();
   const draft = await d.save(await edit(undefined, { draft: true }));
   assert.equal(draft.status, 200);
-  assert.ok(!d.calls.some((c) => c.url.includes('/channels/')));
+  assert.ok(!d.calls.some((c) => c.url === 'buc-bot/announceWikiEdit'));
   const blob = Buffer.from(d.calls.find((c) => c.url === `${REPO}/git/blobs`)!.body.content, 'base64').toString();
   assert.ok(blob.startsWith('---\ndraft: true\naliases: [Benchmarking]\n---\n\n'), blob);
 });
