@@ -3,12 +3,15 @@ import { flushSync } from 'react-dom';
 import { Navigate, Link as RouterLink, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Alert, Box, Button, Stack, Tooltip } from '@mui/material';
 import { PageHeader } from '../components/PageHeader';
+import { TableOfContents } from '../components/TableOfContents';
 import { DraftBanner, DraftChip, WikiFooter, WikiSignInNotice } from '../components/WikiAccess';
 import { WikiMarkdown } from '../components/WikiMarkdown';
 import { WikiLoadFailed, WikiLoading, WikiPageNotFound } from '../components/WikiStates';
 import { editingOff, isEditor, useWikiSession, type WikiSession } from '../wikiAuth';
 import { movedTo, savedPage, useSavedPages, wasDeleted } from '../wikiSaved';
 import { layout } from '../layout';
+import { parseHeadings } from '../tableOfContents';
+import { prepareWikiSource } from '../wikiMarkdown';
 import {
   WIKI_ALL_ROUTE,
   WIKI_DELETED_ROUTE,
@@ -102,6 +105,11 @@ function useScrollToHash(ready: boolean, hash: string) {
   }, [ready, hash]);
 }
 
+// The contents list's own height: the window less the top bar and the sticky box's gap, padding and
+// label (the box scrolls on its own if a window is too short for even the 160 px).
+const TOC_BOX_OFFSET = layout.topBarHeight + 24 + 16;
+const TOC_MAX_HEIGHT = `max(160px, calc(100vh - ${TOC_BOX_OFFSET + 32 + 40}px))`;
+
 const allPagesButton = (
   <Button component={RouterLink} to={WIKI_ALL_ROUTE} size="small" variant="text">
     All pages
@@ -136,6 +144,13 @@ export function WikiPage() {
   }, [slug]);
   const shown: Body = saved ? { status: 'ready', markdown: saved.body } : body;
   useScrollToHash(shown.status === 'ready' && !editing, hash);
+  // The "On this page" list: the page as it renders (frontmatter and comments removed), when it
+  // is shown and has a heading.
+  const contents = useMemo(() => {
+    if (editing || shown.status !== 'ready') return '';
+    const source = prepareWikiSource(shown.markdown);
+    return parseHeadings(source, { wikiLinks: true }).length > 0 ? source : '';
+  }, [editing, shown]);
 
   const onSaved = (result: { slug: string; draft: boolean; unchanged?: boolean; created?: boolean; notice?: string }) => {
     // Closed before any move to another address, so the editor never opens there.
@@ -243,15 +258,43 @@ export function WikiPage() {
         </Alert>
       )}
       <Box
+        data-wiki-body
         sx={{
-          // Headings scrolled to (from a link's #anchor) stay clear of the sticky top bar.
-          '& h1, & h2, & h3, & h4, & h5, & h6': { scrollMarginTop: layout.topBarHeight + 16 },
+          display: 'grid',
+          gap: 3,
+          gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: contents ? 'minmax(0, 1fr) 260px' : 'minmax(0, 1fr)' },
+          alignItems: 'flex-start',
         }}
       >
-        {editing && editor({ slug: page.slug })}
-        {!editing && shown.status === 'loading' && <WikiLoading label="Loading the page" />}
-        {!editing && shown.status === 'failed' && <WikiLoadFailed what="The page" onRetry={retry} />}
-        {!editing && shown.status === 'ready' && <WikiMarkdown source={shown.markdown} context={context} editor={isEditor(session)} />}
+        <Box
+          sx={{
+            minWidth: 0,
+            // Headings scrolled to (from a link's #anchor) stay clear of the sticky top bar.
+            '& h1, & h2, & h3, & h4, & h5, & h6': { scrollMarginTop: layout.topBarHeight + 16 },
+          }}
+        >
+          {editing && editor({ slug: page.slug })}
+          {!editing && shown.status === 'loading' && <WikiLoading label="Loading the page" />}
+          {!editing && shown.status === 'failed' && <WikiLoadFailed what="The page" onRetry={retry} />}
+          {!editing && shown.status === 'ready' && <WikiMarkdown source={shown.markdown} context={context} editor={isEditor(session)} />}
+        </Box>
+        {contents && (
+          <Box
+            component="aside"
+            data-wiki-contents
+            sx={{
+              position: { md: 'sticky' },
+              top: { md: layout.topBarHeight + 24 },
+              // Never taller than the window; whatever does not fit scrolls inside.
+              maxHeight: { md: `calc(100vh - ${TOC_BOX_OFFSET}px)` },
+              overflowY: { md: 'auto' },
+              backgroundColor: 'background.paper',
+              p: 2,
+            }}
+          >
+            <TableOfContents markdown={contents} maxHeight={TOC_MAX_HEIGHT} wikiLinks />
+          </Box>
+        )}
       </Box>
       <WikiFooter />
     </Stack>
