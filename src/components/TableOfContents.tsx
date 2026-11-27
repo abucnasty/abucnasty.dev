@@ -1,56 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Link, Typography } from '@mui/material';
-
-interface Heading {
-  id: string;
-  text: string;
-  level: number;
-}
-
-// Mirrors rehype-slug's github-slugger algorithm: each space becomes a hyphen on its own,
-// so "Cars / Tanks" gives "cars--tanks", as the rendered heading id does.
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, '')
-    .trim()
-    .replace(/ /g, '-');
-}
-
-function parseHeadings(markdown: string): Heading[] {
-  const headings: Heading[] = [];
-  const seen: Record<string, number> = {};
-  let inCodeBlock = false;
-  for (const line of markdown.split('\n')) {
-    if (/^(`{3,}|~{3,})/.test(line)) {
-      inCodeBlock = !inCodeBlock;
-      continue;
-    }
-    if (inCodeBlock) continue;
-    const m = line.match(/^(#{1,4})\s+(.+)$/);
-    if (!m) continue;
-    const level = m[1].length;
-    // Links render as their label; the id is built from that, keeping "_" as rehype-slug does
-    const linked = m[2].replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim();
-    // Strip inline markdown from display text
-    const text = linked.replace(/[*_`]/g, '').trim();
-    const base = slugify(linked);
-    const count = seen[base] ?? 0;
-    seen[base] = count + 1;
-    const id = count === 0 ? base : `${base}-${count}`;
-    headings.push({ id, text, level });
-  }
-  return headings;
-}
+import { parseHeadings } from '../tableOfContents';
 
 interface TableOfContentsProps {
   markdown: string;
   /** Tallest the list gets before it scrolls: px or any CSS length. Default 360. */
   maxHeight?: number | string;
+  /** The markdown is a wiki page's: `[[Page|label]]` in a heading is read as its label. */
+  wikiLinks?: boolean;
 }
 
-export function TableOfContents({ markdown, maxHeight = 360 }: TableOfContentsProps) {
-  const headings = useMemo(() => parseHeadings(markdown), [markdown]);
+export function TableOfContents({ markdown, maxHeight = 360, wikiLinks = false }: TableOfContentsProps) {
+  const headings = useMemo(() => parseHeadings(markdown, { wikiLinks }), [markdown, wikiLinks]);
   const [activeId, setActiveId] = useState<string>('');
   const navRef = useRef<HTMLElement | null>(null);
 
