@@ -1,6 +1,7 @@
 // The wiki, read from the vault in the browser (the fixture in scripts/check/fixtures/wiki.cjs):
 // the front page, a page with every kind of content, both link forms, images, aliases, the list
-// of pages, the loading states, search, and that other pages do not load the wiki's code.
+// of pages, the loading states, search, the "On this page" list, and that other pages do not load
+// the wiki's code.
 const { VAULT } = require('../fixtures/catalog.cjs');
 
 module.exports = {
@@ -77,6 +78,106 @@ module.exports = {
     const arch = await open('/wiki/setting-up-arch-to-run-factorio', 'phone');
     const archImg = await arch.$eval('main img', (el) => el.getAttribute('src'));
     expect('![alt](_attachments/x.png) resolves to the published file', archImg === `${VAULT}/wiki/files/${image.published}?v=${image.v}`, archImg);
+
+    // "On this page": the benchmark pages' list. One link for each heading, each reaching a heading of
+    // the page; none (and no empty column) on a page without heading.
+    for (const viewport of ['desktop', 'phone']) {
+      const page = await open('/wiki/how-to-benchmark', viewport);
+      const box = page.locator('main [data-wiki-contents]');
+      expect(`${viewport}: a page with headings shows "On this page"`, (await box.count()) === 1 && /^On this page/.test(await box.evaluate((el) => el.textContent)), await box.evaluate((el) => el.textContent).catch(() => ''));
+      const links = await box.locator('nav a').evaluateAll((as) => as.map((a) => ({ text: a.textContent, id: (a.getAttribute('href') ?? '').slice(1) })));
+      expect(
+        `${viewport}: the list has one link for each heading, with its text`,
+        JSON.stringify(links.map((l) => l.text)) === JSON.stringify(guide.headings.map((h) => h.text)),
+        JSON.stringify(links.map((l) => l.text)),
+      );
+      for (const l of links) {
+        expect(`${viewport}: the link to #${l.id} reaches a heading in the page`, (await page.locator(`main [id="${l.id}"]`).count()) === 1);
+      }
+      // The list comes after the page on a phone and beside it from the md width.
+      const placed = await page.evaluate(() => {
+        const aside = document.querySelector('main [data-wiki-contents]').getBoundingClientRect();
+        const body = document.querySelector('main [data-wiki-body] > div').getBoundingClientRect();
+        return { asideLeft: aside.left, asideTop: aside.top + window.scrollY, bodyRight: body.right, bodyBottom: body.bottom + window.scrollY };
+      });
+      expect(
+        `${viewport}: the list sits ${viewport === 'desktop' ? 'beside' : 'after'} the page`,
+        viewport === 'desktop' ? placed.asideLeft >= placed.bodyRight : placed.asideTop >= placed.bodyBottom,
+        JSON.stringify(placed),
+      );
+      expect(`${viewport}: no sideways scroll with the list`, (await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)) <= 0);
+
+      const one = await open('/wiki/setting-up-arch-to-run-factorio', viewport);
+      const oneLinks = await one.locator('main [data-wiki-contents] nav a').allInnerTexts();
+      expect(`${viewport}: a page with one heading shows a one-link list`, oneLinks.join('|') === 'Prerequisites', oneLinks.join('|'));
+
+      const front = await open('/wiki', viewport);
+      const frontBody = await front.evaluate(() => ({
+        list: document.querySelectorAll('main [data-wiki-contents]').length,
+        label: /On this page/.test(document.querySelector('main').innerText),
+        columns: getComputedStyle(document.querySelector('main [data-wiki-body]')).gridTemplateColumns.split(' ').length,
+      }));
+      expect(`${viewport}: the front page (no heading) shows no "On this page" and no second column`, frontBody.list === 0 && !frontBody.label && frontBody.columns === 1, JSON.stringify(frontBody));
+    }
+
+    // The active link follows the scroll, and a link scrolls to its heading.
+    const follow = await open('/wiki/how-to-benchmark', 'desktop');
+    const activeText = () => follow.locator('main [data-wiki-contents] nav a').evaluateAll((as) => as.filter((a) => getComputedStyle(a).fontWeight === '600').map((a) => a.textContent));
+    expect('at the top, the first heading is the active link', (await activeText()).join('|') === 'Prerequisites', (await activeText()).join('|'));
+    await follow.evaluate(() => window.scrollTo(0, document.getElementById('step-21-generate-a-test-map').offsetTop - 100));
+    await follow.waitForTimeout(400);
+    expect('after a scroll to the second heading, it is the active link', (await activeText()).join('|') === 'Step 2.1: Generate a Test Map', (await activeText()).join('|'));
+    await follow.locator('main [data-wiki-contents] nav a[href="#prerequisites"]').click();
+    await follow.waitForTimeout(900);
+    const reached = await follow.$eval('#prerequisites', (el) => el.getBoundingClientRect().top);
+    expect('a link in the list scrolls to its heading, clear of the top bar', reached >= 48 && reached < 200, `top ${reached}`);
+    expect('and that heading becomes the active link', (await activeText()).join('|') === 'Prerequisites', (await activeText()).join('|'));
+
+    // A long page: the box stays inside a 1280 × 800 window and its list scrolls inside it.
+    const SECTIONS = Array.from({ length: 40 }, (_, i) => i + 1);
+    const filler = 'Benchmarks compare how many updates per second a save reaches over a fixed number of ticks. '.repeat(6);
+    const long = ['Intro.', '', ...SECTIONS.flatMap((n) => [`## Section ${n} of the long page`, '', filler, ''])].join('\n');
+    const tall = await open('/', 'desktop');
+    await tall.route(`${VAULT}/wiki/how-to-benchmark.md`, (route) => route.fulfill({ status: 200, contentType: 'text/markdown; charset=utf-8', body: long }));
+    await goto(tall, '/wiki/how-to-benchmark');
+    await tall.locator('main [data-wiki-contents] nav a').first().waitFor({ timeout: 5000 }).catch(() => {});
+    await tall.evaluate(() => window.scrollTo(0, document.body.scrollHeight * 0.8));
+    await tall.waitForTimeout(500);
+    const fit = await tall.evaluate(() => {
+      const aside = document.querySelector('main [data-wiki-contents]');
+      const nav = aside.querySelector('nav');
+      const a = aside.getBoundingClientRect();
+      const activeEl = [...nav.querySelectorAll('a')].find((el) => getComputedStyle(el).fontWeight === '600');
+      const n = nav.getBoundingClientRect();
+      const e = activeEl?.getBoundingClientRect();
+      return {
+        top: Math.round(a.top),
+        bottom: Math.round(a.bottom),
+        inner: window.innerHeight,
+        listScrolls: nav.scrollHeight > nav.clientHeight,
+        navScrollTop: Math.round(nav.scrollTop),
+        activeVisible: !!e && e.top >= n.top - 1 && e.bottom <= n.bottom + 1,
+        links: nav.querySelectorAll('a').length,
+        active: activeEl?.textContent,
+      };
+    });
+    expect('1280 × 800: the sidebar sits inside the window (below the top bar, above the bottom)', fit.top >= 48 && fit.bottom <= fit.inner, JSON.stringify(fit));
+    expect('1280 × 800: the list is taller than its box and scrolls inside it, the active link in view', fit.links === 40 && fit.listScrolls && fit.navScrollTop > 0 && fit.activeVisible, JSON.stringify(fit));
+    await shot(tall, 'wiki-contents-long-desktop');
+
+    // An editor's open editor shows the editor, not the list.
+    const editing = await open('/wiki/how-to-benchmark', 'desktop', { wiki: 'editor' });
+    const editButton = main(editing).locator('[data-wiki-edit]');
+    await editButton.waitFor({ timeout: 5000 }).catch(() => {});
+    expect('an editor reading the page sees the list', (await editing.locator('main [data-wiki-contents]').count()) === 1);
+    await editButton.click();
+    await editing.locator('[data-wiki-editor]').waitFor({ timeout: 10000 }).catch(() => {});
+    expect(
+      'while the editor is open there is no "On this page" and no second column',
+      (await editing.locator('[data-wiki-editor]').count()) === 1 &&
+        (await editing.locator('main [data-wiki-contents]').count()) === 0 &&
+        (await editing.$eval('main [data-wiki-body]', (el) => getComputedStyle(el).gridTemplateColumns.split(' ').length)) === 1,
+    );
 
     // A deep link to a heading scrolls to it.
     const deep = await open('/wiki/how-to-benchmark#step-21-generate-a-test-map', 'desktop');
